@@ -1,4 +1,5 @@
 from watcher.knowledge_base.models import (
+    AutomationRun,
     ChunkEmbedding,
     Company,
     CompanyAlias,
@@ -12,6 +13,7 @@ from watcher.knowledge_base.models import (
 )
 
 __all__ = [
+    "AutomationRun",
     "ChunkEmbedding",
     "Company",
     "CompanyAlias",

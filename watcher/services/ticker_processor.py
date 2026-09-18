@@ -67,13 +67,18 @@ class TickerProcessor:
         output_service=None,
         post_processing_service=None,
         filing_processing_service=None,
+        automation_run=None,
+        daily_chronicle=True,
     ):
         self.resolver = resolver or TickerResolver()
         self.discovery = discovery or FilingDiscovery()
         self.downloader = downloader or FilingDownloader()
         self.registry = registry or DownloadRegistry()
+        self.automation_run = automation_run
         self.registration_service = (
-            registration_service or FilingRegistrationService()
+            registration_service or FilingRegistrationService(
+                automation_run=self.automation_run
+            )
         )
 
         self.auto_index = bool(auto_index)
@@ -132,6 +137,7 @@ class TickerProcessor:
             post_processing_service
             or FilingPostProcessingService(
                 auto_index=self.auto_index,
+                daily_chronicle=daily_chronicle,
                 indexing_service=self.indexing_service,
                 summary_service=self.summary_service,
                 metadata_service=self.filing_metadata_service,

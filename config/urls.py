@@ -7,9 +7,20 @@ from django.urls import include, path
 
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+
+    path(
+        "admin/",
+        admin.site.urls
+    ),
+
     path(
         "api/knowledge-base/",
         include("watcher.knowledge_base.api.urls"),
     ),
+
+    path(
+        "api/",
+        include("watcher.api.urls"),
+    ),
+
 ]

@@ -9,6 +9,7 @@ class FilingPostProcessingService:
         self,
         *,
         auto_index,
+        daily_chronicle=True,
         indexing_service,
         summary_service,
         metadata_service,
@@ -17,6 +18,7 @@ class FilingPostProcessingService:
         output_service,
     ):
         self.auto_index = bool(auto_index)
+        self.daily_chronicle = bool(daily_chronicle)
         self.indexing_service = indexing_service
         self.summary_service = summary_service
         self.metadata_service = metadata_service
@@ -108,14 +110,18 @@ class FilingPostProcessingService:
             return result
 
         try:
-            email_sent = self.email_service.send(
-                summary_result=summary_result,
-                filename=filename,
-                saved_path=saved_path,
-                source_url=source_url,
-                metadata=metadata,
-                item_verification=item_verification,
-            )
+            if self.daily_chronicle:
+                email_sent = self.email_service.send(
+                    summary_result=summary_result,
+                    filename=filename,
+                    saved_path=saved_path,
+                    source_url=source_url,
+                    metadata=metadata,
+                    item_verification=item_verification,
+                )
+            else:
+                email_sent = False
+                self.output.status("EMAIL", "SKIPPED (Daily chronicle disabled)")
         except Exception as exc:
             self.output.status("EMAIL", f"FAILED ({exc})")
             self.output.finish()

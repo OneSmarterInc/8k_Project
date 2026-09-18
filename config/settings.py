@@ -110,9 +110,11 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'watcher',
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -314,3 +316,8 @@ SEC_ALERT_RECIPIENT_EMAIL = os.getenv(
     "SEC_ALERT_RECIPIENT_EMAIL",
     "",
 )
+CORS_ALLOWED_ORIGINS = [
+
+    "http://localhost:5173",
+
+]

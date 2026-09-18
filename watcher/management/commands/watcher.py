@@ -7,6 +7,8 @@ from watcher.services.ticker_file_reader import (
 from watcher.services.ticker_processor import (
     TickerProcessor,
 )
+from watcher.models import AutomationRun
+from django.utils import timezone
 
 
 class Command(BaseCommand):
@@ -24,10 +26,19 @@ class Command(BaseCommand):
                 "filing, ingest, chunk, and embed it."
             ),
         )
+        parser.add_argument(
+            "--no-daily-chronicle",
+            action="store_true",
+            help="Disable sending the daily chronicle email.",
+        )
 
     def handle(self, *args, **options):
         auto_index = bool(
             options.get("auto_index")
+        )
+        
+        daily_chronicle = not bool(
+            options.get("no_daily_chronicle")
         )
 
         try:
@@ -60,10 +71,16 @@ class Command(BaseCommand):
             )
         )
 
+        run = AutomationRun.objects.create()
+        self.stdout.write(f"Created AutomationRun ID: {run.id}")
+
         processor = TickerProcessor(
             auto_index=auto_index,
+            automation_run=run,
+            daily_chronicle=daily_chronicle,
         )
 
+        total_discovered = 0
         total_downloaded = 0
         total_skipped = 0
         total_failed = 0
@@ -78,12 +95,7 @@ class Command(BaseCommand):
             tickers,
             start=1,
         ):
-            self.stdout.write("")
-
-            self.stdout.write(
-                f"[{index}/{len(tickers)}] "
-                f"Processing {ticker}..."
-            )
+            # We now print ticker processing info only if there were downloads
 
             try:
                 result = processor.process(
@@ -115,6 +127,10 @@ class Command(BaseCommand):
 
             processed += 1
 
+            total_discovered += (
+                result["discovered"]
+            )
+
             total_downloaded += (
                 result["downloaded"]
             )
@@ -141,6 +157,11 @@ class Command(BaseCommand):
                 )
             )
 
+            self.stdout.write("")
+            self.stdout.write(
+                f"[{index}/{len(tickers)}] "
+                f"Processing {ticker}..."
+            )
             self.stdout.write(
                 self.style.SUCCESS(
                     f"{ticker}: "
@@ -163,22 +184,22 @@ class Command(BaseCommand):
                 form,
                 form_result,
             ) in result["forms"].items():
-
-                self.stdout.write(
-                    f"  {form}: "
-                    f"discovered="
-                    f"{form_result['discovered']} "
-                    f"downloaded="
-                    f"{form_result['downloaded']} "
-                    f"skipped="
-                    f"{form_result['skipped']} "
-                    f"failed="
-                    f"{form_result['failed']} "
-                    f"indexed="
-                    f"{form_result.get('indexed', 0)} "
-                    f"index_failed="
-                    f"{form_result.get('index_failed', 0)}"
-                )
+                if form_result["downloaded"] > 0 or form_result["skipped"] > 0:
+                    self.stdout.write(
+                        f"  {form}: "
+                        f"discovered="
+                        f"{form_result['discovered']} "
+                        f"downloaded="
+                        f"{form_result['downloaded']} "
+                        f"skipped="
+                        f"{form_result['skipped']} "
+                        f"failed="
+                        f"{form_result['failed']} "
+                        f"indexed="
+                        f"{form_result.get('indexed', 0)} "
+                        f"index_failed="
+                        f"{form_result.get('index_failed', 0)}"
+                    )
 
                 for error in (
                     form_result["errors"]
@@ -239,3 +260,28 @@ class Command(BaseCommand):
             f"Indexing failures: "
             f"{total_index_failed}"
         )
+
+        from watcher.models import FilingSummaryCache
+        summary_count = FilingSummaryCache.objects.filter(filing__automation_run=run).count()
+        # Since email sending is triggered during post-processing and we don't have a direct email model,
+        # we'll use the summary count as a proxy for processed/emailed items or 0 if indexing is off.
+        email_count = summary_count if auto_index else 0
+
+        # Determine overall run status based on failures
+        if total_failed == 0 and total_index_failed == 0:
+            final_status = AutomationRun.Status.COMPLETED
+        else:
+            if total_indexed > 0 or total_downloaded > 0:
+                final_status = AutomationRun.Status.PARTIAL
+            else:
+                final_status = AutomationRun.Status.FAILED
+
+        run.status = final_status
+        run.completed_at = timezone.now()
+        run.files_detected = total_discovered
+        run.files_processed = total_indexed
+        run.summary_generated_count = summary_count
+        run.email_sent_count = email_count
+        run.save()
+
+        self.stdout.write(f"AutomationRun {run.id} marked as completed.")

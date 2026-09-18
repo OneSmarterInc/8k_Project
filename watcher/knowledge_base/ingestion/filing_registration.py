@@ -18,6 +18,9 @@ class FilingRegistrationService:
     accepted_at is optional so all existing callers remain compatible.
     """
 
+    def __init__(self, automation_run=None):
+        self.automation_run = automation_run
+
     @transaction.atomic
     def register(
         self,
@@ -102,6 +105,7 @@ class FilingRegistrationService:
                         .IngestionStatus
                         .PENDING
                     ),
+                    "automation_run": self.automation_run,
                 },
             )
         )
@@ -141,6 +145,10 @@ class FilingRegistrationService:
                 "local_path",
                 "source_url",
             ]
+
+            if self.automation_run is not None:
+                filing.automation_run = self.automation_run
+                update_fields.append("automation_run")
 
             if accepted_at is not None:
                 filing.accepted_at = (

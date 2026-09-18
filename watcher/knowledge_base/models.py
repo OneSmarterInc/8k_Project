@@ -41,6 +41,14 @@ class Filing(models.Model):
         INDEXED = "indexed", "Indexed"
         FAILED = "failed", "Failed"
 
+    automation_run = models.ForeignKey(
+        "AutomationRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="filings",
+    )
+
     company = models.ForeignKey(
         Company,
         on_delete=models.PROTECT,
@@ -638,3 +646,29 @@ class DocumentSummaryCache(models.Model):
             f"[{self.model_name} / "
             f"{self.prompt_version}]"
         )
+
+
+class AutomationRun(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        PARTIAL = "partial", "Partial"
+        FAILED = "failed", "Failed"
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.RUNNING,
+    )
+    files_detected = models.PositiveIntegerField(default=0)
+    files_processed = models.PositiveIntegerField(default=0)
+    summary_generated_count = models.PositiveIntegerField(default=0)
+    email_sent_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"Run {self.id} - {self.status}"

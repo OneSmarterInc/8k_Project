@@ -213,16 +213,6 @@ class FilingNotificationService:
             )
 
         # ---------------------------------------------------------
-        # Independent/manual audit status.
-        # ---------------------------------------------------------
-
-        if manual_audit_status:
-            details.append(
-                "Manual EDGAR Audit: "
-                f"{manual_audit_status}"
-            )
-
-        # ---------------------------------------------------------
         # Remaining filing details.
         # ---------------------------------------------------------
 
@@ -262,6 +252,200 @@ class FilingNotificationService:
         return "\n".join(
             details
         ).strip()
+
+    @classmethod
+    def _build_html_body(
+        cls,
+        *,
+        ticker,
+        form_type,
+        filename,
+        filing_date,
+        accession_number,
+        local_path,
+        sec_url,
+        clean_summary,
+        accepted_at_display,
+        entry_session,
+        item_codes,
+        item_verification_status,
+        company_verification_status,
+        manual_audit_status,
+    ):
+        """
+        Build the HTML version of the SEC filing notification email.
+        """
+        summary_html = str(clean_summary or "").replace("\n", "<br>")
+        
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    background-color: #f4f7f6;
+                    color: #333333;
+                    margin: 0;
+                    padding: 20px;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                    border: 1px solid #e1e4e8;
+                }}
+                .header {{
+                    background-color: #0f172a;
+                    color: #ffffff;
+                    padding: 24px;
+                    text-align: center;
+                }}
+                .header h1 {{
+                    margin: 0;
+                    font-size: 24px;
+                    font-weight: 600;
+                    letter-spacing: -0.5px;
+                }}
+                .header p {{
+                    margin: 8px 0 0 0;
+                    color: #94a3b8;
+                    font-size: 14px;
+                }}
+                .content {{
+                    padding: 32px 24px;
+                }}
+                .section-title {{
+                    font-size: 12px;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    color: #64748b;
+                    font-weight: 700;
+                    margin-bottom: 16px;
+                    border-bottom: 1px solid #f1f5f9;
+                    padding-bottom: 8px;
+                }}
+                .details-grid {{
+                    display: table;
+                    width: 100%;
+                    margin-bottom: 32px;
+                }}
+                .detail-row {{
+                    display: table-row;
+                }}
+                .detail-label {{
+                    display: table-cell;
+                    padding: 8px 16px 8px 0;
+                    color: #64748b;
+                    font-size: 14px;
+                    font-weight: 500;
+                    width: 40%;
+                }}
+                .detail-value {{
+                    display: table-cell;
+                    padding: 8px 0;
+                    color: #0f172a;
+                    font-size: 14px;
+                    font-weight: 600;
+                }}
+                .summary-box {{
+                    background-color: #f8fafc;
+                    border-left: 4px solid #3b82f6;
+                    padding: 16px 20px;
+                    margin-bottom: 32px;
+                    border-radius: 0 4px 4px 0;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #334155;
+                }}
+                .btn {{
+                    display: inline-block;
+                    background-color: #3b82f6;
+                    color: #ffffff;
+                    text-decoration: none;
+                    padding: 10px 20px;
+                    border-radius: 4px;
+                    font-weight: 500;
+                    font-size: 14px;
+                    text-align: center;
+                }}
+                .footer {{
+                    background-color: #f8fafc;
+                    padding: 24px;
+                    text-align: center;
+                    border-top: 1px solid #e2e8f0;
+                    color: #64748b;
+                    font-size: 12px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>New {form_type} Filing</h1>
+                    <p>{ticker}</p>
+                </div>
+                <div class="content">
+                    <p style="margin-top: 0; margin-bottom: 24px; color: #475569; font-size: 15px;">
+                        A new SEC filing has been detected and processed successfully.
+                    </p>
+                    
+                    <div class="section-title">Company & Filing Details</div>
+                    <div class="details-grid">
+                        <div class="detail-row">
+                            <div class="detail-label">Ticker</div>
+                            <div class="detail-value">{ticker}</div>
+                        </div>
+                        <div class="detail-row">
+                            <div class="detail-label">Form Type</div>
+                            <div class="detail-value">{form_type}</div>
+                        </div>
+                        <div class="detail-row">
+                            <div class="detail-label">Filing Date</div>
+                            <div class="detail-value">{filing_date or 'N/A'}</div>
+                        </div>
+                        <div class="detail-row">
+                            <div class="detail-label">Accession Number</div>
+                            <div class="detail-value">{accession_number or 'N/A'}</div>
+                        </div>
+                        {f'''<div class="detail-row">
+                            <div class="detail-label">EDGAR Accepted</div>
+                            <div class="detail-value">{accepted_at_display}</div>
+                        </div>''' if accepted_at_display else ''}
+                        {f'''<div class="detail-row">
+                            <div class="detail-label">Entry Session</div>
+                            <div class="detail-value">{entry_session}</div>
+                        </div>''' if entry_session else ''}
+                        {f'''<div class="detail-row">
+                            <div class="detail-label">SEC Item Codes</div>
+                            <div class="detail-value">{cls._format_item_codes(item_codes)}</div>
+                        </div>''' if str(form_type).strip().upper() == "8-K" else ''}
+                        {f'''<div class="detail-row">
+                            <div class="detail-label">Company Verification</div>
+                            <div class="detail-value">{company_verification_status}</div>
+                        </div>''' if company_verification_status else ''}
+                    </div>
+
+                    <div class="section-title">Filing Summary</div>
+                    <div class="summary-box">
+                        {summary_html}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 32px;">
+                        <a href="{sec_url or '#'}" class="btn">View on SEC EDGAR</a>
+                    </div>
+                </div>
+                <div class="footer">
+                    This notification was generated automatically by the SEC Filing Watcher.<br>
+                    File: {filename or 'N/A'}
+                </div>
+            </div>
+        </body>
+        </html>
+        """
 
     def send_new_filing_notification(
         self,
@@ -409,6 +593,23 @@ class FilingNotificationService:
             "SEC_REPLY_TO_EMAIL",
             "",
         )
+        
+        html_body = self._build_html_body(
+            ticker=ticker,
+            form_type=form_type,
+            filename=filename,
+            filing_date=filing_date,
+            accession_number=accession_number,
+            local_path=local_path,
+            sec_url=sec_url,
+            clean_summary=clean_summary,
+            accepted_at_display=accepted_at_display,
+            entry_session=entry_session,
+            item_codes=item_codes,
+            item_verification_status=item_verification_status,
+            company_verification_status=company_verification_status,
+            manual_audit_status=manual_audit_status,
+        )
 
         try:
             email = EmailMultiAlternatives(
@@ -426,6 +627,8 @@ class FilingNotificationService:
                     else None
                 ),
             )
+            
+            email.attach_alternative(html_body, "text/html")
 
             result = email.send(
                 fail_silently=False,
