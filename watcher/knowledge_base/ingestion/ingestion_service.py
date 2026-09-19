@@ -11,11 +11,13 @@ from watcher.knowledge_base.ingestion.sec_parser import SECParser
 from watcher.knowledge_base.ingestion.text_extractor import TextExtractor
 from watcher.knowledge_base.models import (
     Filing,
-    FilingChunk,
-    FilingDocument,
     IngestionJob,
+    FailureEvent,
 )
 
+from watcher.services.failure_tracking_service import (
+    FailureTrackingService,
+)
 
 class IngestionError(Exception):
     """Raised when a filing cannot be ingested."""
@@ -259,7 +261,12 @@ class FilingIngestionService:
                         "updated_at",
                     ]
                 )
-
+                FailureTrackingService.record(
+                    filing=locked_filing,
+                    stage=FailureEvent.Stage.INGESTION,
+                    code=FailureEvent.Code.INGESTION_FAILED,
+                    message=error,
+                )
             return IngestionResult(
                 filing_id=filing.pk,
                 chunks_created=len(chunks),

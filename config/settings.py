@@ -322,3 +322,18 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
 
 ]
+
+# ---------------------------------------------------------------------
+# Event study entry rule
+#
+# T_PLUS_1:
+# Filing accepted today -> next trading session close
+#
+# SAME_SESSION:
+# Filing accepted before close -> same session close
+# ---------------------------------------------------------------------
+
+ENTRY_RULE = _env_str(
+    "ENTRY_RULE",
+    "T_PLUS_1",
+)

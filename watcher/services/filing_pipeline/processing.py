@@ -1,5 +1,8 @@
 from pathlib import Path
-
+from watcher.knowledge_base.models import FailureEvent
+from watcher.services.failure_tracking_service import (
+    FailureTrackingService,
+)
 
 class FilingProcessingService:
     """
@@ -46,9 +49,22 @@ class FilingProcessingService:
 
     @staticmethod
     def _merge_post_result(result, post_result):
-        result["indexed"] += post_result["indexed"]
-        result["index_failed"] += post_result["index_failed"]
-        result["errors"].extend(post_result["errors"])
+        result["indexed"] += post_result.get(
+            "indexed",
+            0,
+        )
+
+        result["index_failed"] += post_result.get(
+            "index_failed",
+            0,
+        )
+
+        result["errors"].extend(
+            post_result.get(
+                "errors",
+                [],
+            )
+        )
 
     def process(
         self,
@@ -117,20 +133,26 @@ class FilingProcessingService:
                 download.get("sequence") or sequence
             ).strip()
 
-            # Preserve existing semantics: mark only after the file
-            # has been written successfully.
             self.registry.mark_downloaded(
                 cik,
                 accession_number,
                 downloaded_sequence,
             )
+
             result["downloaded"] = 1
 
-            saved_path = str(download["path"])
-            saved_filename = Path(saved_path).name
+            saved_path = str(
+                download["path"]
+            )
+
+            saved_filename = Path(
+                saved_path
+            ).name
+
             resolved_form_type = str(
                 document.get("type") or form
             ).strip()
+
             source_url = str(
                 download.get("url") or ""
             ).strip()
@@ -138,8 +160,25 @@ class FilingProcessingService:
             metadata = self.metadata_service.prepare(
                 filing=filing,
                 expected_cik=cik,
-                expected_company_name=company.get("name", ""),
+                expected_company_name=company.get(
+                    "name",
+                    "",
+                ),
                 expected_ticker=ticker,
+            )
+
+            print(
+                "DEBUG FILING:",
+                filing,
+            )
+
+            print(
+                "DEBUG SEC ITEMS:",
+                getattr(
+                    metadata,
+                    "sec_item_codes",
+                    (),
+                ),
             )
 
             self.output.new_filing(
@@ -154,35 +193,81 @@ class FilingProcessingService:
             )
 
             try:
-                registered_filing = self.registration_service.register(
-                    ticker=ticker,
-                    cik=cik,
-                    company_name=company.get("name", ""),
-                    form=form,
-                    accession_number=accession_number,
-                    sequence=downloaded_sequence,
-                    filing_date=filing_date,
-                    primary_document=primary_document,
-                    local_path=download["path"],
-                    source_url=download["url"],
-                    accepted_at=metadata.accepted_at,
-                    entry_session=metadata.entry_session,
+                registered_filing = (
+                    self.registration_service.register(
+                        ticker=ticker,
+                        cik=cik,
+                        company_name=company.get(
+                            "name",
+                            "",
+                        ),
+                        form=form,
+                        accession_number=accession_number,
+                        sequence=downloaded_sequence,
+                        filing_date=filing_date,
+                        primary_document=primary_document,
+                        local_path=download["path"],
+                        source_url=download["url"],
+
+                        accepted_at=getattr(
+                            metadata,
+                            "accepted_at",
+                            None,
+                        ),
+
+                        entry_session=getattr(
+                            metadata,
+                            "entry_session",
+                            None,
+                        ),
+
+                        # New fields are optional.
+                        # Existing flow remains compatible.
+                        sec_item_codes=getattr(
+                            metadata,
+                            "sec_item_codes",
+                            (),
+                        ),
+
+                        parsed_item_codes=getattr(
+                            metadata,
+                            "parsed_item_codes",
+                            (),
+                        ),
+
+                        item_codes_match=getattr(
+                            metadata,
+                            "item_codes_match",
+                            None,
+                        ),
+                    )
                 )
 
-                self.output.status("REGISTRATION", "SUCCESS")
+                self.output.status(
+                    "REGISTRATION",
+                    "SUCCESS",
+                )
+                FailureTrackingService.record(
+                    stage=FailureEvent.Stage.REGISTRATION,
+                    code=FailureEvent.Code.REGISTRATION_FAILED,
+                    message=exc,
+                )
                 self.output.metadata(
                     metadata=metadata,
                     form=form,
                 )
+
             except Exception as exc:
                 result["errors"].append(
                     "Knowledge-base registration failed for "
                     f"{accession_number}: {exc}"
                 )
+
                 self.output.status(
                     "REGISTRATION",
                     f"FAILED ({exc})",
                 )
+
                 return result
 
             post_result = self.post_processing.run(
@@ -195,12 +280,18 @@ class FilingProcessingService:
                 source_url=source_url,
             )
 
-            self._merge_post_result(result, post_result)
+            self._merge_post_result(
+                result,
+                post_result,
+            )
+
             return result
 
         except Exception as exc:
             result["failed"] = 1
+
             result["errors"].append(
                 f"{accession_number}: {exc}"
             )
+
             return result

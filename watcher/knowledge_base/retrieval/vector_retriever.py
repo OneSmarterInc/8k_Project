@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date
 
-from pgvector.django import CosineDistance
+# from pgvector.django import CosineDistance
 
 from watcher.knowledge_base.embeddings.embedding_indexer import (
     EmbeddingIndexer,
@@ -59,6 +59,7 @@ class VectorRetriever:
         top_k=8,
     ) -> list[RetrievalResult]:
 
+        raise NotImplementedError("Chatbot feature is disabled and pgvector is removed.")
         query = str(query or "").strip()
 
         if not query:

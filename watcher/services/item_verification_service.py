@@ -31,8 +31,7 @@ class ItemVerificationService:
     """
 
     ITEM_PATTERN = re.compile(
-        r"^(?:ITEM\s+)?"
-        r"(?P<number>\d{1,2}(?:\.\d{2})?[A-Z]?)$",
+        r"^(?P<number>\d{1,2}(?:\.\d{2})?[A-Z]?)$",
         re.IGNORECASE,
     )
 
@@ -52,12 +51,26 @@ class ItemVerificationService:
             text,
         )
 
-        match = cls.ITEM_PATTERN.match(text)
+        # Handles parser output:
+        # "Item 7.01"
+        # "ITEM 9.01"
+        # "7.01"
+        text = re.sub(
+            r"^ITEM\s+",
+            "",
+            text,
+        )
+
+        match = cls.ITEM_PATTERN.match(
+            text
+        )
 
         if not match:
             return ""
 
-        return match.group("number").upper()
+        return match.group(
+            "number"
+        ).upper()
 
     @classmethod
     def normalize_item_codes(cls, values):
@@ -65,7 +78,10 @@ class ItemVerificationService:
         seen = set()
 
         for value in values or ():
-            item = cls.normalize_item_code(value)
+
+            item = cls.normalize_item_code(
+                value
+            )
 
             if not item:
                 continue
@@ -78,27 +94,39 @@ class ItemVerificationService:
 
         return tuple(result)
 
-    def get_parsed_items(self, filing):
-        if not isinstance(filing, Filing):
+    def get_parsed_items(
+        self,
+        filing,
+    ):
+        if not isinstance(
+            filing,
+            Filing,
+        ):
             raise TypeError(
                 "filing must be a Filing instance."
             )
 
         values = (
             FilingChunk.objects
-            .filter(filing=filing)
+            .filter(
+                filing=filing
+            )
             .filter(
                 Q(document__is_primary=True)
                 | Q(document__isnull=True)
             )
-            .exclude(item_number="")
+            .exclude(
+                item_number=""
+            )
             .values_list(
                 "item_number",
                 flat=True,
             )
         )
 
-        return self.normalize_item_codes(values)
+        return self.normalize_item_codes(
+            values
+        )
 
     def verify(
         self,
@@ -122,8 +150,13 @@ class ItemVerificationService:
                 extra_in_parser=(),
             )
 
-        sec_set = set(sec_items)
-        parsed_set = set(parsed_items)
+        sec_set = set(
+            sec_items
+        )
+
+        parsed_set = set(
+            parsed_items
+        )
 
         missing = tuple(
             item

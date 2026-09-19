@@ -1,5 +1,5 @@
 from django.db import models
-from pgvector.django import VectorField
+# from pgvector.django import VectorField
 
 
 class Company(models.Model):
@@ -83,7 +83,32 @@ class Filing(models.Model):
         db_index=True,
     )
 
+    sec_item_codes = models.TextField(
+        blank=True,
+        default="",
+        help_text=(
+            "SEC reported 8-K item codes. "
+            "Example: 1.01;9.01"
+        ),
+    )
 
+    parsed_item_codes = models.TextField(
+        blank=True,
+        default="",
+        help_text=(
+            "Item codes extracted by internal parser. "
+            "Example: 1.01;9.01"
+        ),
+    )
+
+    item_codes_match = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Whether SEC reported items match "
+            "parsed item codes."
+        ),
+    )
     primary_document = models.CharField(
         max_length=255,
         blank=True,
@@ -112,7 +137,16 @@ class Filing(models.Model):
         default=IngestionStatus.PENDING,
         db_index=True,
     )
+    flag = models.BooleanField(
+        default=False,
+        db_index=True,
+    )
 
+    flag_reason = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
     downloaded_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -384,8 +418,11 @@ class ChunkEmbedding(models.Model):
         related_name="chunk_embeddings",
     )
 
-    vector = VectorField(
-        dimensions=768,
+    # vector = VectorField(
+    #     dimensions=768,
+    # )
+    vector = models.JSONField(
+        default=list,
     )
 
     created_at = models.DateTimeField(
@@ -697,3 +734,81 @@ class ScheduleConfig(models.Model):
 
     class Meta:
         verbose_name_plural = 'Schedule Config'
+class FailureEvent(models.Model):
+
+    class Stage(models.TextChoices):
+        DOWNLOAD = "download", "Download"
+        METADATA = "metadata", "Metadata"
+        REGISTRATION = "registration", "Registration"
+        INDEXING = "indexing", "Indexing"
+        SUMMARY = "summary", "Summary"
+        EMAIL = "email", "Email"
+        INGESTION = "ingestion", "Ingestion"
+
+
+    class Code(models.TextChoices):
+        UNKNOWN = "unknown", "Unknown"
+        DOWNLOAD_FAILED = (
+            "download_failed",
+            "Download Failed",
+        )
+        METADATA_FAILED = (
+            "metadata_failed",
+            "Metadata Failed",
+        )
+        REGISTRATION_FAILED = (
+            "registration_failed",
+            "Registration Failed",
+        )
+        INDEX_FAILED = (
+            "index_failed",
+            "Index Failed",
+        )
+        SUMMARY_FAILED = (
+            "summary_failed",
+            "Summary Failed",
+        )
+        EMAIL_FAILED = (
+            "email_failed",
+            "Email Failed",
+        )
+        INGESTION_FAILED = (
+            "ingestion_failed",
+            "Ingestion Failed",
+        )
+
+
+    filing = models.ForeignKey(
+        Filing,
+        on_delete=models.CASCADE,
+        related_name="failure_events",
+        null=True,
+        blank=True,
+    )
+
+
+    stage = models.CharField(
+        max_length=30,
+        choices=Stage.choices,
+    )
+
+
+    code = models.CharField(
+        max_length=50,
+        choices=Code.choices,
+        default=Code.UNKNOWN,
+    )
+
+
+    message = models.TextField()
+
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+
+    def __str__(self):
+        return (
+            f"{self.stage}: {self.code}"
+        )

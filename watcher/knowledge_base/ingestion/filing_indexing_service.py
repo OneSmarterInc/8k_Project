@@ -67,18 +67,18 @@ class FilingIndexingService:
             )
         )
 
-        embedding_result = (
-            self.embedding_service.index_filing(
-                filing
-            )
-        )
-
-        if embedding_result.failed:
-            raise FilingIndexingError(
-                f"Filing {filing.id} had "
-                f"{embedding_result.failed} "
-                "embedding failure(s)."
-            )
+        # embedding_result = (
+        #     self.embedding_service.index_filing(
+        #         filing
+        #     )
+        # )
+        # 
+        # if embedding_result.failed:
+        #     raise FilingIndexingError(
+        #         f"Filing {filing.id} had "
+        #         f"{embedding_result.failed} "
+        #         "embedding failure(s)."
+        #     )
 
         return FilingIndexingResult(
             filing_id=filing.id,
@@ -88,16 +88,8 @@ class FilingIndexingService:
             chunks_created=(
                 ingestion_result.chunks_created
             ),
-            embeddings_selected=(
-                embedding_result.selected
-            ),
-            embeddings_completed=(
-                embedding_result.completed
-            ),
-            embeddings_failed=(
-                embedding_result.failed
-            ),
-            failed_chunk_ids=(
-                embedding_result.failed_chunk_ids
-            ),
+            embeddings_selected=0,  # (embedding_result.selected),
+            embeddings_completed=0,  # (embedding_result.completed),
+            embeddings_failed=0,  # (embedding_result.failed),
+            failed_chunk_ids=tuple(),  # (embedding_result.failed_chunk_ids),
         )

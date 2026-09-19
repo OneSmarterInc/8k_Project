@@ -37,6 +37,9 @@ class FilingRegistrationService:
         source_url,
         accepted_at=None,
         entry_session=None,
+        sec_item_codes="",
+        parsed_item_codes="",
+        item_codes_match=None,
     ):
         ticker = str(
             ticker
@@ -86,6 +89,9 @@ class FilingRegistrationService:
                     "filing_date": filing_date,
                     "accepted_at": accepted_at,
                     "entry_session": entry_session,
+                    "sec_item_codes": sec_item_codes,
+                    "parsed_item_codes": parsed_item_codes,
+                    "item_codes_match": item_codes_match,
                     "primary_document": (
                         primary_document
                         or ""
@@ -165,6 +171,23 @@ class FilingRegistrationService:
 
                 update_fields.append(
                     "entry_session"
+                )
+            if sec_item_codes:
+                filing.sec_item_codes = sec_item_codes
+                update_fields.append(
+                    "sec_item_codes"
+                )
+
+            if parsed_item_codes:
+                filing.parsed_item_codes = parsed_item_codes
+                update_fields.append(
+                    "parsed_item_codes"
+                )
+
+            if item_codes_match is not None:
+                filing.item_codes_match = item_codes_match
+                update_fields.append(
+                    "item_codes_match"
                 )
             if filing.downloaded_at is None:
                 filing.downloaded_at = (

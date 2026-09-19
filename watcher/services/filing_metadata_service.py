@@ -13,7 +13,10 @@ from watcher.services.market_session import (
 from watcher.services.timestamp_service import (
     TimestampService,
 )
-
+from watcher.knowledge_base.models import FailureEvent
+from watcher.services.failure_tracking_service import (
+    FailureTrackingService,
+)
 
 @dataclass
 class FilingMetadata:
@@ -26,20 +29,19 @@ class FilingMetadata:
 
     sec_item_codes: tuple[str, ...] = ()
 
+    parsed_item_codes: tuple[str, ...] = ()
+
+    item_codes_match: bool | None = None
+
     company_verification: object = None
 
     timestamp_error: str = ""
     session_error: str = ""
     company_verification_error: str = ""
+    item_verification_error: str = ""
 
 
 class FilingMetadataService:
-    """
-    Coordinates optional SEC metadata.
-
-    Does not download, register, index, summarize,
-    or send email.
-    """
 
     def __init__(
         self,
@@ -71,6 +73,7 @@ class FilingMetadataService:
 
     @staticmethod
     def _normalize_item_codes(value):
+
         if not value:
             return ()
 
@@ -84,9 +87,7 @@ class FilingMetadataService:
         seen = set()
 
         for item in values:
-            cleaned = str(
-                item
-            ).strip()
+            cleaned = str(item).strip()
 
             if not cleaned:
                 continue
@@ -107,6 +108,7 @@ class FilingMetadataService:
         expected_company_name="",
         expected_ticker="",
     ):
+
         metadata = FilingMetadata(
             acceptance_datetime=str(
                 filing.get(
@@ -126,9 +128,37 @@ class FilingMetadataService:
             ),
         )
 
-        # -----------------------------------------------------
-        # Acceptance timestamp.
-        # -----------------------------------------------------
+        # -------------------------------
+        # SEC item verification
+        # -------------------------------
+
+        if metadata.sec_item_codes:
+            try:
+                verification_result, error = self.verify_items(
+                    filing=filing,
+                    form=filing.get("form", ""),
+                    sec_item_codes=metadata.sec_item_codes,
+                )
+
+                if verification_result:
+                    metadata.parsed_item_codes = (
+                        verification_result.parsed_items
+                    )
+
+                    metadata.item_codes_match = (
+                        verification_result.matched
+                    )
+
+                if error:
+                    metadata.item_verification_error = error
+
+            except Exception as exc:
+                metadata.item_verification_error = str(exc)
+                metadata.item_codes_match = None
+
+        # -------------------------------
+        # Acceptance timestamp
+        # -------------------------------
 
         if metadata.acceptance_datetime:
             try:
@@ -147,16 +177,18 @@ class FilingMetadataService:
                 )
 
             except Exception as exc:
-                metadata.timestamp_error = str(
-                    exc
-                )
-
+                metadata.timestamp_error = str(exc)
                 metadata.accepted_at = None
                 metadata.accepted_at_display = ""
 
-        # -----------------------------------------------------
-        # Entry trading session.
-        # -----------------------------------------------------
+                FailureTrackingService.record(
+                    stage=FailureEvent.Stage.METADATA,
+                    code=FailureEvent.Code.METADATA_FAILED,
+                    message=str(exc),
+                )
+        # -------------------------------
+        # Entry trading session
+        # -------------------------------
 
         if metadata.accepted_at is not None:
             try:
@@ -168,18 +200,17 @@ class FilingMetadataService:
                 )
 
             except Exception as exc:
-                metadata.session_error = str(
-                    exc
-                )
-
+                metadata.session_error = str(exc)
                 metadata.entry_session = None
 
-        # -----------------------------------------------------
-        # Company identity verification.
-        #
-        # SEC CIK is primary.
-        # Name/ticker are secondary diagnostics.
-        # -----------------------------------------------------
+                FailureTrackingService.record(
+                    stage=FailureEvent.Stage.METADATA,
+                    code=FailureEvent.Code.METADATA_FAILED,
+                    message=str(exc),
+                )
+        # -------------------------------
+        # Company verification
+        # -------------------------------
 
         sec_cik = str(
             filing.get(
@@ -194,9 +225,7 @@ class FilingMetadataService:
                 metadata.company_verification = (
                     self.company_verification_service
                     .verify(
-                        expected_cik=(
-                            expected_cik
-                        ),
+                        expected_cik=expected_cik,
                         sec_cik=sec_cik,
                         expected_company_name=(
                             expected_company_name
@@ -207,9 +236,7 @@ class FilingMetadataService:
                                 "",
                             )
                         ),
-                        expected_ticker=(
-                            expected_ticker
-                        ),
+                        expected_ticker=expected_ticker,
                         sec_tickers=(
                             filing.get(
                                 "sec_tickers",
@@ -220,11 +247,10 @@ class FilingMetadataService:
                 )
 
             except Exception as exc:
-                metadata.company_verification_error = (
-                    str(exc)
-                )
+                metadata.company_verification_error = str(exc)
 
         return metadata
+
 
     def verify_items(
         self,
@@ -233,6 +259,7 @@ class FilingMetadataService:
         form,
         sec_item_codes,
     ):
+
         if (
             str(form)
             .strip()
