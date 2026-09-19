@@ -45,7 +45,7 @@ class TickerProcessor:
         -> aggregate results
     """
 
-    FORMS = ("8-K", "10-K", "10-Q")
+    FORMS = ("8-K", "8-K/A", "10-K", "10-Q")
 
     def __init__(
         self,

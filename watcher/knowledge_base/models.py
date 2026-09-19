@@ -59,6 +59,15 @@ class Filing(models.Model):
         max_length=32,
     )
 
+    amends = models.OneToOneField(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="amended_by",
+        help_text="The original filing this amendment supersedes",
+    )
+
     sequence = models.PositiveIntegerField(
         default=1,
     )
@@ -68,6 +77,11 @@ class Filing(models.Model):
     )
 
     filing_date = models.DateField(
+        null=True,
+        blank=True,
+    )
+
+    report_date = models.DateField(
         null=True,
         blank=True,
     )

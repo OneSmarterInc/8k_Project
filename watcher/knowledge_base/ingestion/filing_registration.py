@@ -41,6 +41,7 @@ class FilingRegistrationService:
         sec_item_codes="",
         parsed_item_codes="",
         item_codes_match=None,
+        report_date=None,
         flag=False,
         flag_reason="",
     ):
@@ -98,6 +99,10 @@ class FilingRegistrationService:
 
                     "entry_session": (
                         entry_session
+                    ),
+
+                    "report_date": (
+                        report_date
                     ),
 
                     "sec_item_codes": (
@@ -215,6 +220,17 @@ class FilingRegistrationService:
                 )
 
 
+            if report_date is not None:
+
+                filing.report_date = (
+                    report_date
+                )
+
+                update_fields.append(
+                    "report_date"
+                )
+
+
             if sec_item_codes:
 
                 filing.sec_item_codes = (
@@ -281,6 +297,17 @@ class FilingRegistrationService:
             filing.save(
                 update_fields=update_fields
             )
+
+
+        if form == "8-K/A" and filing.report_date:
+            original = Filing.objects.filter(
+                company=company,
+                form="8-K",
+                report_date=filing.report_date,
+            ).order_by("-filing_date", "-accepted_at").first()
+            if original and filing.amends != original:
+                filing.amends = original
+                filing.save(update_fields=["amends", "updated_at"])
 
 
         IngestionJob.objects.get_or_create(

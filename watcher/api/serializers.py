@@ -37,9 +37,22 @@ class FilingSerializer(serializers.ModelSerializer):
         source="company.name",
         read_only=True
     )
+    
+    amends_accession = serializers.CharField(
+        source="amends.accession_number",
+        read_only=True,
+        allow_null=True,
+        default=None,
+    )
+
+    amended_by_accession = serializers.CharField(
+        source="amended_by.accession_number",
+        read_only=True,
+        allow_null=True,
+        default=None,
+    )
 
     summary = serializers.SerializerMethodField()
-
 
     class Meta:
 
@@ -59,6 +72,8 @@ class FilingSerializer(serializers.ModelSerializer):
             "created_at",
             "summary",
             "classification",
+            "amends_accession",
+            "amended_by_accession",
         ]
 
 

@@ -27,6 +27,7 @@ class FilingDiscovery:
 
     SUPPORTED_FORMS = frozenset({
         "8-K",
+        "8-K/A",
         "10-K",
         "10-Q",
     })
@@ -139,32 +140,105 @@ class FilingDiscovery:
             )
         )
 
+        filings = self._parse_filings_block(
+            block=recent,
+            form=form,
+            start_date=start_date,
+            end_date=end_date,
+            normalized_cik=normalized_cik,
+            sec_cik=sec_cik,
+            sec_company_name=sec_company_name,
+            sec_tickers=sec_tickers,
+        )
+
+        files = data.get("filings", {}).get("files", [])
+        for file_info in files:
+            try:
+                filing_from = date.fromisoformat(file_info.get("filingFrom", ""))
+                filing_to = date.fromisoformat(file_info.get("filingTo", ""))
+                
+                # Check if this shard overlaps with the requested date range
+                if filing_from <= end_date and filing_to >= start_date:
+                    shard_name = file_info.get("name")
+                    if shard_name:
+                        shard_url = f"https://data.sec.gov/submissions/{shard_name}"
+                        shard_data = self.client.get_json(shard_url)
+                        
+                        shard_filings = self._parse_filings_block(
+                            block=shard_data,
+                            form=form,
+                            start_date=start_date,
+                            end_date=end_date,
+                            normalized_cik=normalized_cik,
+                            sec_cik=sec_cik,
+                            sec_company_name=sec_company_name,
+                            sec_tickers=sec_tickers,
+                        )
+                        filings.extend(shard_filings)
+            except (TypeError, ValueError, Exception):
+                # Ignore corrupted or unfetchable shards
+                pass
+
+        # ---------------------------------------------------------
+        # Preserve existing sorting behavior.
+        # ---------------------------------------------------------
+
+        filings.sort(
+            key=lambda filing: (
+                filing[
+                    "filing_date"
+                ],
+                filing[
+                    "accession_number"
+                ],
+            ),
+            reverse=True,
+        )
+
+        return filings
+
+    def _parse_filings_block(
+        self,
+        block,
+        form,
+        start_date,
+        end_date,
+        normalized_cik,
+        sec_cik,
+        sec_company_name,
+        sec_tickers,
+    ):
         # ---------------------------------------------------------
         # Existing required SEC metadata.
         # ---------------------------------------------------------
 
-        forms = recent.get(
+        forms = block.get(
             "form",
             [],
         )
 
-        filing_dates = recent.get(
+        filing_dates = block.get(
             "filingDate",
             [],
         )
 
-        accession_numbers = recent.get(
+        report_dates = block.get(
+            "reportDate",
+            [],
+        )
+
+        accession_numbers = block.get(
             "accessionNumber",
             [],
         )
 
-        primary_documents = recent.get(
+        primary_documents = block.get(
             "primaryDocument",
             [],
         )
 
         primary_document_descriptions = (
-            recent.get(
+            block.get(
                 "primaryDocDescription",
                 [],
             )
@@ -181,12 +255,12 @@ class FilingDiscovery:
         # to disappear from discovery.
         # ---------------------------------------------------------
 
-        acceptance_datetimes = recent.get(
+        acceptance_datetimes = block.get(
             "acceptanceDateTime",
             [],
         )
 
-        filing_items = recent.get(
+        filing_items = block.get(
             "items",
             [],
         )
@@ -245,6 +319,19 @@ class FilingDiscovery:
                 )
                 else ""
             )
+
+            report_date_str = (
+                report_dates[index]
+                if index < len(report_dates)
+                else ""
+            )
+
+            report_date = None
+            if report_date_str:
+                try:
+                    report_date = date.fromisoformat(report_date_str)
+                except (TypeError, ValueError):
+                    pass
 
             # -----------------------------------------------------
             # EDGAR acceptance datetime.
@@ -313,6 +400,10 @@ class FilingDiscovery:
                         filing_date.isoformat()
                     ),
 
+                    "report_date": (
+                        report_date.isoformat() if report_date else ""
+                    ),
+
                     "acceptance_datetime": (
                         acceptance_datetime
                     ),
@@ -338,21 +429,5 @@ class FilingDiscovery:
                     "sec_tickers": sec_tickers,
                 }
             )
-
-        # ---------------------------------------------------------
-        # Preserve existing sorting behavior.
-        # ---------------------------------------------------------
-
-        filings.sort(
-            key=lambda filing: (
-                filing[
-                    "filing_date"
-                ],
-                filing[
-                    "accession_number"
-                ],
-            ),
-            reverse=True,
-        )
 
         return filings

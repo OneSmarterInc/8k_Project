@@ -244,6 +244,8 @@ class FilingProcessingService:
                             None,
                         ),
 
+                        report_date=filing.get("report_date"),
+
                         sec_item_codes=getattr(
                             metadata,
                             "sec_item_codes",

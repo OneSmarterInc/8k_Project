@@ -13,6 +13,8 @@ from watcher.knowledge_base.models import (
     Filing,
     IngestionJob,
     FailureEvent,
+    FilingDocument,
+    FilingChunk,
 )
 
 from watcher.services.failure_tracking_service import (
