@@ -17,3 +17,5 @@ tzdata==2026.3
 urllib3==2.7.0
 pandas-market-calendars==5.4.0
 django-cors-headers
+apscheduler==3.10.4
+django-apscheduler==0.7.0

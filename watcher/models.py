@@ -10,6 +10,7 @@ from watcher.knowledge_base.models import (
     FilingDocument,
     FilingSummaryCache,
     IngestionJob,
+    ScheduleConfig,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "FilingDocument",
     "FilingSummaryCache",
     "IngestionJob",
+    "ScheduleConfig",
 ]

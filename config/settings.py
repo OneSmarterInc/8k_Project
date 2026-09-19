@@ -111,6 +111,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'watcher',
     "corsheaders",
+    'django_apscheduler',
 ]
 
 MIDDLEWARE = [

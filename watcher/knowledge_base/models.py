@@ -672,3 +672,28 @@ class AutomationRun(models.Model):
 
     def __str__(self):
         return f"Run {self.id} - {self.status}"
+
+class ScheduleConfig(models.Model):
+    frequency = models.CharField(max_length=20, default='daily')
+    start_date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True)
+    sync_zone = models.BooleanField(default=False)
+    
+    daily_recur = models.IntegerField(default=1)
+    
+    weekly_recur = models.IntegerField(default=1)
+    weekly_days = models.JSONField(default=dict)
+    
+    monthly_type = models.CharField(max_length=20, default='days')
+    monthly_months = models.CharField(max_length=50, default='All months')
+    monthly_days = models.CharField(max_length=100, default='1')
+    monthly_on_week = models.CharField(max_length=20, default='First')
+    monthly_on_day = models.CharField(max_length=20, default='Sunday')
+    
+    run_count = models.IntegerField(default=1)
+    run_times = models.JSONField(default=list)
+    
+    is_active = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name_plural = 'Schedule Config'

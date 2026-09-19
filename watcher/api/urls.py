@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import filings, runs, trigger_run, run_logs, SMTPConfigView
+from .views import filings, runs, trigger_run, run_logs, SMTPConfigView, ScheduleConfigView
 
 urlpatterns = [
     path(
@@ -26,5 +26,10 @@ urlpatterns = [
         "settings/smtp/",
         SMTPConfigView.as_view(),
         name="smtp_config"
+    ),
+    path(
+        "settings/schedule/",
+        ScheduleConfigView.as_view(),
+        name="schedule_config"
     ),
 ]

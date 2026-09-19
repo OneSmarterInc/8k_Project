@@ -7,7 +7,7 @@ from watcher.services.ticker_file_reader import (
 from watcher.services.ticker_processor import (
     TickerProcessor,
 )
-from watcher.models import AutomationRun
+from watcher.models import AutomationRun, ScheduleConfig
 from django.utils import timezone
 
 
@@ -91,12 +91,19 @@ class Command(BaseCommand):
         processed = 0
         invalid = 0
 
+        from django.core.cache import cache
+
         for index, ticker in enumerate(
             tickers,
             start=1,
         ):
-            # We now print ticker processing info only if there were downloads
+            # Abort if the user toggles off the background automation
+            if cache.get("abort_automation_run"):
+                self.stdout.write(self.style.WARNING("\nAutomation toggled OFF by user. Aborting active run...\n"))
+                cache.delete("abort_automation_run")
+                break
 
+            # We now print ticker processing info only if there were downloads
             try:
                 result = processor.process(
                     ticker
