@@ -21,6 +21,7 @@ class FilingRegistrationService:
     def __init__(self, automation_run=None):
         self.automation_run = automation_run
 
+
     @transaction.atomic
     def register(
         self,
@@ -40,7 +41,10 @@ class FilingRegistrationService:
         sec_item_codes="",
         parsed_item_codes="",
         item_codes_match=None,
+        flag=False,
+        flag_reason="",
     ):
+
         ticker = str(
             ticker
         ).strip().upper()
@@ -57,6 +61,7 @@ class FilingRegistrationService:
             sequence
         )
 
+
         company, _ = (
             Company.objects.update_or_create(
                 cik=cik,
@@ -70,13 +75,7 @@ class FilingRegistrationService:
             )
         )
 
-        # ---------------------------------------------------------
-        # Preserve all existing creation behavior.
-        #
-        # accepted_at is additive only.
-        # If no EDGAR acceptance timestamp was supplied, it remains
-        # NULL just as it did previously.
-        # ---------------------------------------------------------
+
         filing, created = (
             Filing.objects.get_or_create(
                 company=company,
@@ -84,39 +83,75 @@ class FilingRegistrationService:
                     accession_number
                 ),
                 sequence=sequence,
+
                 defaults={
+
                     "form": form,
-                    "filing_date": filing_date,
-                    "accepted_at": accepted_at,
-                    "entry_session": entry_session,
-                    "sec_item_codes": sec_item_codes,
-                    "parsed_item_codes": parsed_item_codes,
-                    "item_codes_match": item_codes_match,
+
+                    "filing_date": (
+                        filing_date
+                    ),
+
+                    "accepted_at": (
+                        accepted_at
+                    ),
+
+                    "entry_session": (
+                        entry_session
+                    ),
+
+                    "sec_item_codes": (
+                        sec_item_codes
+                    ),
+
+                    "parsed_item_codes": (
+                        parsed_item_codes
+                    ),
+
+                    "item_codes_match": (
+                        item_codes_match
+                    ),
+
+                    "flag": flag,
+
+                    "flag_reason": (
+                        flag_reason
+                    ),
+
                     "primary_document": (
                         primary_document
                         or ""
                     ),
+
                     "local_path": str(
                         local_path
                     ),
+
                     "source_url": (
                         source_url
                         or ""
                     ),
+
                     "downloaded_at": (
                         timezone.now()
                     ),
+
                     "ingestion_status": (
                         Filing
                         .IngestionStatus
                         .PENDING
                     ),
-                    "automation_run": self.automation_run,
+
+                    "automation_run": (
+                        self.automation_run
+                    ),
                 },
             )
         )
 
+
         if not created:
+
             filing.form = form
 
             filing.filing_date = (
@@ -137,13 +172,7 @@ class FilingRegistrationService:
                 or ""
             )
 
-            # -----------------------------------------------------
-            # IMPORTANT:
-            # Never erase an existing accepted_at value simply
-            # because an old caller did not provide the new field.
-            #
-            # Only update accepted_at when a real value is supplied.
-            # -----------------------------------------------------
+
             update_fields = [
                 "form",
                 "filing_date",
@@ -152,11 +181,20 @@ class FilingRegistrationService:
                 "source_url",
             ]
 
+
             if self.automation_run is not None:
-                filing.automation_run = self.automation_run
-                update_fields.append("automation_run")
+
+                filing.automation_run = (
+                    self.automation_run
+                )
+
+                update_fields.append(
+                    "automation_run"
+                )
+
 
             if accepted_at is not None:
+
                 filing.accepted_at = (
                     accepted_at
                 )
@@ -164,7 +202,10 @@ class FilingRegistrationService:
                 update_fields.append(
                     "accepted_at"
                 )
+
+
             if entry_session is not None:
+
                 filing.entry_session = (
                     entry_session
                 )
@@ -172,24 +213,57 @@ class FilingRegistrationService:
                 update_fields.append(
                     "entry_session"
                 )
+
+
             if sec_item_codes:
-                filing.sec_item_codes = sec_item_codes
+
+                filing.sec_item_codes = (
+                    sec_item_codes
+                )
+
                 update_fields.append(
                     "sec_item_codes"
                 )
 
+
             if parsed_item_codes:
-                filing.parsed_item_codes = parsed_item_codes
+
+                filing.parsed_item_codes = (
+                    parsed_item_codes
+                )
+
                 update_fields.append(
                     "parsed_item_codes"
                 )
 
+
             if item_codes_match is not None:
-                filing.item_codes_match = item_codes_match
+
+                filing.item_codes_match = (
+                    item_codes_match
+                )
+
                 update_fields.append(
                     "item_codes_match"
                 )
+
+
+            filing.flag = flag
+
+            filing.flag_reason = (
+                flag_reason
+            )
+
+            update_fields.extend(
+                [
+                    "flag",
+                    "flag_reason",
+                ]
+            )
+
+
             if filing.downloaded_at is None:
+
                 filing.downloaded_at = (
                     timezone.now()
                 )
@@ -198,17 +272,16 @@ class FilingRegistrationService:
                     "downloaded_at"
                 )
 
-            # auto_now fields need to be explicitly included when
-            # update_fields is supplied.
+
             update_fields.append(
                 "updated_at"
             )
 
+
             filing.save(
-                update_fields=(
-                    update_fields
-                )
+                update_fields=update_fields
             )
+
 
         IngestionJob.objects.get_or_create(
             filing=filing,
@@ -220,5 +293,6 @@ class FilingRegistrationService:
                 ),
             },
         )
+
 
         return filing

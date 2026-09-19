@@ -1,14 +1,16 @@
 from pathlib import Path
+
 from watcher.knowledge_base.models import FailureEvent
 from watcher.services.failure_tracking_service import (
     FailureTrackingService,
 )
 
+
 class FilingProcessingService:
     """
     Process exactly one discovered filing.
 
-    Stage order is intentionally unchanged:
+    Stage order:
 
         resolve document
         -> duplicate check
@@ -36,6 +38,7 @@ class FilingProcessingService:
         self.post_processing = post_processing_service
         self.output = output_service
 
+
     @staticmethod
     def _result():
         return {
@@ -47,8 +50,10 @@ class FilingProcessingService:
             "errors": [],
         }
 
+
     @staticmethod
     def _merge_post_result(result, post_result):
+
         result["indexed"] += post_result.get(
             "indexed",
             0,
@@ -66,6 +71,7 @@ class FilingProcessingService:
             )
         )
 
+
     def process(
         self,
         *,
@@ -75,28 +81,36 @@ class FilingProcessingService:
         form,
         filing,
     ):
+
         result = self._result()
 
         accession_number = filing["accession_number"]
         primary_document = filing["primary_document"]
         filing_date = filing["filing_date"]
 
+
         try:
-            base_url, document = self.downloader.resolve_document(
-                cik=cik,
-                accession_number=accession_number,
-                file_type=form,
-                hint_filename=primary_document,
+
+            base_url, document = (
+                self.downloader.resolve_document(
+                    cik=cik,
+                    accession_number=accession_number,
+                    file_type=form,
+                    hint_filename=primary_document,
+                )
             )
+
 
             sequence = str(
                 document.get("sequence") or ""
             ).strip()
 
+
             if not sequence:
                 raise ValueError(
                     "SEC document sequence could not be resolved"
                 )
+
 
             if self.registry.is_downloaded(
                 cik,
@@ -106,15 +120,24 @@ class FilingProcessingService:
                 result["skipped"] = 1
                 return result
 
-            file_type = document.get("type") or form
+
+            file_type = (
+                document.get("type")
+                or form
+            )
+
             original_filename = document["filename"]
 
-            local_filename = self.downloader.build_filename(
-                form=form,
-                file_type=file_type,
-                filing_date=filing_date,
-                original_filename=original_filename,
+
+            local_filename = (
+                self.downloader.build_filename(
+                    form=form,
+                    file_type=file_type,
+                    filing_date=filing_date,
+                    original_filename=original_filename,
+                )
             )
+
 
             download = self.downloader.download(
                 cik=cik,
@@ -129,9 +152,12 @@ class FilingProcessingService:
                 form=form,
             )
 
+
             downloaded_sequence = str(
-                download.get("sequence") or sequence
+                download.get("sequence")
+                or sequence
             ).strip()
+
 
             self.registry.mark_downloaded(
                 cik,
@@ -139,23 +165,31 @@ class FilingProcessingService:
                 downloaded_sequence,
             )
 
+
             result["downloaded"] = 1
+
 
             saved_path = str(
                 download["path"]
             )
 
+
             saved_filename = Path(
                 saved_path
             ).name
 
+
             resolved_form_type = str(
-                document.get("type") or form
+                document.get("type")
+                or form
             ).strip()
 
+
             source_url = str(
-                download.get("url") or ""
+                download.get("url")
+                or ""
             ).strip()
+
 
             metadata = self.metadata_service.prepare(
                 filing=filing,
@@ -167,19 +201,6 @@ class FilingProcessingService:
                 expected_ticker=ticker,
             )
 
-            print(
-                "DEBUG FILING:",
-                filing,
-            )
-
-            print(
-                "DEBUG SEC ITEMS:",
-                getattr(
-                    metadata,
-                    "sec_item_codes",
-                    (),
-                ),
-            )
 
             self.output.new_filing(
                 ticker=ticker,
@@ -192,7 +213,9 @@ class FilingProcessingService:
                 source_url=source_url,
             )
 
+
             try:
+
                 registered_filing = (
                     self.registration_service.register(
                         ticker=ticker,
@@ -221,8 +244,6 @@ class FilingProcessingService:
                             None,
                         ),
 
-                        # New fields are optional.
-                        # Existing flow remains compatible.
                         sec_item_codes=getattr(
                             metadata,
                             "sec_item_codes",
@@ -240,35 +261,58 @@ class FilingProcessingService:
                             "item_codes_match",
                             None,
                         ),
+
+                        flag=getattr(
+                            metadata,
+                            "flag",
+                            False,
+                        ),
+
+                        flag_reason=getattr(
+                            metadata,
+                            "flag_reason",
+                            "",
+                        ),
                     )
                 )
+
 
                 self.output.status(
                     "REGISTRATION",
                     "SUCCESS",
                 )
-                FailureTrackingService.record(
-                    stage=FailureEvent.Stage.REGISTRATION,
-                    code=FailureEvent.Code.REGISTRATION_FAILED,
-                    message=exc,
-                )
+
+
                 self.output.metadata(
                     metadata=metadata,
                     form=form,
                 )
 
+
             except Exception as exc:
+
                 result["errors"].append(
                     "Knowledge-base registration failed for "
                     f"{accession_number}: {exc}"
                 )
+
 
                 self.output.status(
                     "REGISTRATION",
                     f"FAILED ({exc})",
                 )
 
+
+                FailureTrackingService.record(
+                    stage=FailureEvent.Stage.REGISTRATION,
+                    code=FailureEvent.Code.REGISTRATION_FAILED,
+                    message=str(exc),
+                )
+
+
                 return result
+
+
 
             post_result = self.post_processing.run(
                 registered_filing=registered_filing,
@@ -280,14 +324,19 @@ class FilingProcessingService:
                 source_url=source_url,
             )
 
+
             self._merge_post_result(
                 result,
                 post_result,
             )
 
+
             return result
 
+
+
         except Exception as exc:
+
             result["failed"] = 1
 
             result["errors"].append(

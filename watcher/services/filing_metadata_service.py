@@ -18,8 +18,10 @@ from watcher.services.failure_tracking_service import (
     FailureTrackingService,
 )
 
+
 @dataclass
 class FilingMetadata:
+
     acceptance_datetime: str = ""
 
     accepted_at: datetime | None = None
@@ -40,6 +42,9 @@ class FilingMetadata:
     company_verification_error: str = ""
     item_verification_error: str = ""
 
+    flag: bool = False
+    flag_reason: str = ""
+
 
 class FilingMetadataService:
 
@@ -51,6 +56,7 @@ class FilingMetadataService:
         item_verification_service=None,
         company_verification_service=None,
     ):
+
         self.timestamp_service = (
             timestamp_service
             or TimestampService()
@@ -71,6 +77,7 @@ class FilingMetadataService:
             or CompanyVerificationService()
         )
 
+
     @staticmethod
     def _normalize_item_codes(value):
 
@@ -87,6 +94,7 @@ class FilingMetadataService:
         seen = set()
 
         for item in values:
+
             cleaned = str(item).strip()
 
             if not cleaned:
@@ -99,6 +107,7 @@ class FilingMetadataService:
             result.append(cleaned)
 
         return tuple(result)
+
 
     def prepare(
         self,
@@ -128,19 +137,30 @@ class FilingMetadataService:
             ),
         )
 
+
         # -------------------------------
         # SEC item verification
         # -------------------------------
 
         if metadata.sec_item_codes:
+
             try:
-                verification_result, error = self.verify_items(
-                    filing=filing,
-                    form=filing.get("form", ""),
-                    sec_item_codes=metadata.sec_item_codes,
+
+                verification_result, error = (
+                    self.verify_items(
+                        filing=filing,
+                        form=filing.get(
+                            "form",
+                            "",
+                        ),
+                        sec_item_codes=(
+                            metadata.sec_item_codes
+                        ),
+                    )
                 )
 
                 if verification_result:
+
                     metadata.parsed_item_codes = (
                         verification_result.parsed_items
                     )
@@ -152,16 +172,29 @@ class FilingMetadataService:
                 if error:
                     metadata.item_verification_error = error
 
+
             except Exception as exc:
+
                 metadata.item_verification_error = str(exc)
                 metadata.item_codes_match = None
+
 
         # -------------------------------
         # Acceptance timestamp
         # -------------------------------
 
-        if metadata.acceptance_datetime:
+        if not metadata.acceptance_datetime:
+
+            metadata.flag = True
+            metadata.flag_reason = (
+                "MISSING_ACCEPTANCE_TS"
+            )
+
+
+        else:
+
             try:
+
                 metadata.accepted_at = (
                     self.timestamp_service
                     .parse_acceptance(
@@ -176,22 +209,33 @@ class FilingMetadataService:
                     )
                 )
 
+
             except Exception as exc:
+
                 metadata.timestamp_error = str(exc)
                 metadata.accepted_at = None
                 metadata.accepted_at_display = ""
+
+                metadata.flag = True
+                metadata.flag_reason = (
+                    "MALFORMED_ACCEPTANCE_TS"
+                )
 
                 FailureTrackingService.record(
                     stage=FailureEvent.Stage.METADATA,
                     code=FailureEvent.Code.METADATA_FAILED,
                     message=str(exc),
                 )
+
+
         # -------------------------------
         # Entry trading session
         # -------------------------------
 
         if metadata.accepted_at is not None:
+
             try:
+
                 metadata.entry_session = (
                     self.market_session_service
                     .entry_session(
@@ -199,15 +243,24 @@ class FilingMetadataService:
                     )
                 )
 
+
             except Exception as exc:
+
                 metadata.session_error = str(exc)
                 metadata.entry_session = None
+
+                metadata.flag = True
+                metadata.flag_reason = (
+                    "NO_SESSION_RESOLVED"
+                )
 
                 FailureTrackingService.record(
                     stage=FailureEvent.Stage.METADATA,
                     code=FailureEvent.Code.METADATA_FAILED,
                     message=str(exc),
                 )
+
+
         # -------------------------------
         # Company verification
         # -------------------------------
@@ -220,8 +273,11 @@ class FilingMetadataService:
             or ""
         ).strip()
 
+
         if sec_cik:
+
             try:
+
                 metadata.company_verification = (
                     self.company_verification_service
                     .verify(
@@ -246,10 +302,14 @@ class FilingMetadataService:
                     )
                 )
 
+
             except Exception as exc:
+
                 metadata.company_verification_error = str(exc)
 
+
         return metadata
+
 
 
     def verify_items(
@@ -266,12 +326,17 @@ class FilingMetadataService:
             .upper()
             != "8-K"
         ):
+
             return None, ""
+
 
         if not sec_item_codes:
+
             return None, ""
 
+
         try:
+
             result = (
                 self.item_verification_service
                 .verify(
@@ -282,5 +347,7 @@ class FilingMetadataService:
 
             return result, ""
 
+
         except Exception as exc:
+
             return None, str(exc)
