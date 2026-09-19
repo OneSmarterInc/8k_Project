@@ -6,3 +6,5 @@ __pycache__/
 *.pyd
 downloads/
 *.log
+# SMTP test files
+test_smtp.py
