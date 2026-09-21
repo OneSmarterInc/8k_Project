@@ -168,6 +168,8 @@ class TickerProcessor:
             "failed": 0,
             "indexed": 0,
             "index_failed": 0,
+            "shards_expected": 0,
+            "shards_parsed": 0,
             "errors": [],
         }
 
@@ -203,6 +205,8 @@ class TickerProcessor:
             "failed": 0,
             "indexed": 0,
             "index_failed": 0,
+            "shards_expected": 0,
+            "shards_parsed": 0,
             "forms": {},
         }
 
@@ -217,10 +221,30 @@ class TickerProcessor:
             directory.mkdir(parents=True, exist_ok=True)
 
             try:
-                filings = self.discovery.list_filings(
+                discovery_result = self.discovery.list_filings(
                     cik=cik,
                     form=form,
                 )
+                filings = discovery_result.get("filings", [])
+                expected = discovery_result.get("shards_expected", 0)
+                parsed = discovery_result.get("shards_parsed", 0)
+                shard_errors = discovery_result.get("shard_errors", [])
+                
+                form_summary["shards_expected"] = expected
+                form_summary["shards_parsed"] = parsed
+                summary["shards_expected"] += expected
+                summary["shards_parsed"] += parsed
+                
+                if shard_errors:
+                    from watcher.knowledge_base.models import FailureEvent
+                    for error_msg in shard_errors:
+                        FailureEvent.objects.create(
+                            stage=FailureEvent.Stage.DISCOVERY,
+                            code=FailureEvent.Code.SHARD_FETCH_FAILED,
+                            message=str(error_msg),
+                        )
+                        form_summary["errors"].append(f"Shard failed: {error_msg}")
+                        
             except Exception as exc:
                 form_summary["failed"] += 1
                 summary["failed"] += 1

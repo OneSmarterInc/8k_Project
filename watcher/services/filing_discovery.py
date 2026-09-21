@@ -151,19 +151,26 @@ class FilingDiscovery:
             sec_tickers=sec_tickers,
         )
 
+        expected_shards = 0
+        parsed_shards = 0
+        shard_errors = []
+
         files = data.get("filings", {}).get("files", [])
         for file_info in files:
             try:
                 filing_from = date.fromisoformat(file_info.get("filingFrom", ""))
                 filing_to = date.fromisoformat(file_info.get("filingTo", ""))
+            except (TypeError, ValueError):
+                continue
                 
-                # Check if this shard overlaps with the requested date range
-                if filing_from <= end_date and filing_to >= start_date:
-                    shard_name = file_info.get("name")
-                    if shard_name:
-                        shard_url = f"https://data.sec.gov/submissions/{shard_name}"
+            # Check if this shard overlaps with the requested date range
+            if filing_from <= end_date and filing_to >= start_date:
+                shard_name = file_info.get("name")
+                if shard_name:
+                    expected_shards += 1
+                    shard_url = f"https://data.sec.gov/submissions/{shard_name}"
+                    try:
                         shard_data = self.client.get_json(shard_url)
-                        
                         shard_filings = self._parse_filings_block(
                             block=shard_data,
                             form=form,
@@ -175,9 +182,9 @@ class FilingDiscovery:
                             sec_tickers=sec_tickers,
                         )
                         filings.extend(shard_filings)
-            except (TypeError, ValueError, Exception):
-                # Ignore corrupted or unfetchable shards
-                pass
+                        parsed_shards += 1
+                    except Exception as e:
+                        shard_errors.append(str(e))
 
         # ---------------------------------------------------------
         # Preserve existing sorting behavior.
@@ -195,7 +202,12 @@ class FilingDiscovery:
             reverse=True,
         )
 
-        return filings
+        return {
+            "filings": filings,
+            "shards_expected": expected_shards,
+            "shards_parsed": parsed_shards,
+            "shard_errors": shard_errors,
+        }
 
     def _parse_filings_block(
         self,

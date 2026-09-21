@@ -59,7 +59,7 @@ class Filing(models.Model):
         max_length=32,
     )
 
-    amends = models.OneToOneField(
+    amends = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
         null=True,
@@ -715,8 +715,11 @@ class AutomationRun(models.Model):
     )
     files_detected = models.PositiveIntegerField(default=0)
     files_processed = models.PositiveIntegerField(default=0)
+    shards_expected = models.PositiveIntegerField(default=0)
+    shards_parsed = models.PositiveIntegerField(default=0)
     summary_generated_count = models.PositiveIntegerField(default=0)
     email_sent_count = models.PositiveIntegerField(default=0)
+    unlinked_amendments_count = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["-started_at"]
@@ -751,6 +754,7 @@ class ScheduleConfig(models.Model):
 class FailureEvent(models.Model):
 
     class Stage(models.TextChoices):
+        DISCOVERY = "discovery", "Discovery"
         DOWNLOAD = "download", "Download"
         METADATA = "metadata", "Metadata"
         REGISTRATION = "registration", "Registration"
@@ -762,6 +766,10 @@ class FailureEvent(models.Model):
 
     class Code(models.TextChoices):
         UNKNOWN = "unknown", "Unknown"
+        SHARD_FETCH_FAILED = (
+            "shard_fetch_failed",
+            "Shard Fetch Failed",
+        )
         DOWNLOAD_FAILED = (
             "download_failed",
             "Download Failed",

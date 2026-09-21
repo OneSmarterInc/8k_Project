@@ -45,12 +45,10 @@ class FilingSerializer(serializers.ModelSerializer):
         default=None,
     )
 
-    amended_by_accession = serializers.CharField(
-        source="amended_by.accession_number",
-        read_only=True,
-        allow_null=True,
-        default=None,
-    )
+    amended_by_accession = serializers.SerializerMethodField()
+
+    def get_amended_by_accession(self, obj):
+        return list(obj.amended_by.values_list("accession_number", flat=True))
 
     summary = serializers.SerializerMethodField()
 
