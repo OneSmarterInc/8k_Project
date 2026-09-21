@@ -2,9 +2,17 @@ import logging
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime
+import os
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 from watcher.models import ScheduleConfig
 
 logger = logging.getLogger(__name__)
+
+tz_name = os.getenv("SCHEDULER_TIMEZONE", "America/New_York")
+tz = ZoneInfo(tz_name)
 
 def build_triggers_for_config(config: ScheduleConfig):
     """
@@ -28,19 +36,19 @@ def build_triggers_for_config(config: ScheduleConfig):
         
         if freq == "onetime":
             if config.start_date and config.start_time:
-                dt = datetime.combine(config.start_date, config.start_time)
-                triggers.append(DateTrigger(run_date=dt))
+                dt = datetime.combine(config.start_date, config.start_time).replace(tzinfo=tz)
+                triggers.append(DateTrigger(run_date=dt, timezone=tz))
                 
         elif freq == "daily":
             for t_str in run_times:
                 h, m = map(int, t_str.split(":"))
                 if config.daily_recur == 1:
-                    triggers.append(CronTrigger(hour=h, minute=m))
+                    triggers.append(CronTrigger(hour=h, minute=m, timezone=tz))
                 else:
                     from apscheduler.triggers.interval import IntervalTrigger
                     import datetime as dt_module
-                    start = datetime.combine(config.start_date or datetime.today().date(), dt_module.time(h, m))
-                    triggers.append(IntervalTrigger(days=config.daily_recur, start_date=start))
+                    start = datetime.combine(config.start_date or datetime.today().date(), dt_module.time(h, m)).replace(tzinfo=tz)
+                    triggers.append(IntervalTrigger(days=config.daily_recur, start_date=start, timezone=tz))
                     
         elif freq == "weekly":
             day_map = {'mon': 'mon', 'tue': 'tue', 'wed': 'wed', 'thu': 'thu', 'fri': 'fri', 'sat': 'sat', 'sun': 'sun'}
@@ -49,7 +57,7 @@ def build_triggers_for_config(config: ScheduleConfig):
             
             for t_str in run_times:
                 h, m = map(int, t_str.split(":"))
-                triggers.append(CronTrigger(day_of_week=day_cron, hour=h, minute=m))
+                triggers.append(CronTrigger(day_of_week=day_cron, hour=h, minute=m, timezone=tz))
                 
         elif freq == "monthly":
             for t_str in run_times:
@@ -57,11 +65,11 @@ def build_triggers_for_config(config: ScheduleConfig):
                 
                 months = "*"
                 if config.monthly_months and config.monthly_months.lower() != "all months":
-                    months = "*"
+                    months = config.monthly_months
                     
                 if config.monthly_type == "days":
                     days = config.monthly_days.replace(" ", "") if config.monthly_days else "1"
-                    triggers.append(CronTrigger(month=months, day=days, hour=h, minute=m))
+                    triggers.append(CronTrigger(month=months, day=days, hour=h, minute=m, timezone=tz))
                 else:
                     week_map = {"First": "1st", "Second": "2nd", "Third": "3rd", "Fourth": "4th", "Last": "last"}
                     day_map = {"Sunday": "sun", "Monday": "mon", "Tuesday": "tue", "Wednesday": "wed", "Thursday": "thu", "Friday": "fri", "Saturday": "sat"}
@@ -75,7 +83,7 @@ def build_triggers_for_config(config: ScheduleConfig):
                         num = nth.replace('st','').replace('nd','').replace('rd','').replace('th','')
                         day_expr = f"{dow}#{num}"
                         
-                    triggers.append(CronTrigger(month=months, day_of_week=day_expr, hour=h, minute=m))
+                    triggers.append(CronTrigger(month=months, day_of_week=day_expr, hour=h, minute=m, timezone=tz))
                     
     except Exception as e:
         logger.error(f"Error building triggers from config: {e}")

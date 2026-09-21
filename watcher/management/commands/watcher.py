@@ -33,6 +33,17 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        from django.db import connection
+        
+        # Acquire PostgreSQL advisory lock to guarantee only ONE watcher runs at a time globally
+        with connection.cursor() as cursor:
+            # 82039147519301 is an arbitrary 64-bit integer for the 8K-Agentic-System Watcher lock
+            cursor.execute("SELECT pg_try_advisory_lock(82039147519301)")
+            acquired = cursor.fetchone()[0]
+            if not acquired:
+                self.stdout.write(self.style.ERROR("\n[ABORT] Another SEC watcher instance is currently running. Exiting safely to prevent overlaps.\n"))
+                return
+
         auto_index = bool(
             options.get("auto_index")
         )
@@ -94,16 +105,16 @@ class Command(BaseCommand):
         processed = 0
         invalid = 0
 
-        from django.core.cache import cache
+        from watcher.models import ScheduleConfig
 
         for index, ticker in enumerate(
             tickers,
             start=1,
         ):
             # Abort if the user toggles off the background automation
-            if cache.get("abort_automation_run"):
-                self.stdout.write(self.style.WARNING("\nAutomation toggled OFF by user. Aborting active run...\n"))
-                cache.delete("abort_automation_run")
+            config = ScheduleConfig.objects.first()
+            if config and not config.is_active:
+                self.stdout.write(self.style.WARNING("\nAutomation toggled OFF by user (ScheduleConfig inactive). Aborting active run...\n"))
                 break
 
             # We now print ticker processing info only if there were downloads

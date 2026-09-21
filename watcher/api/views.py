@@ -12,64 +12,16 @@ def runs(request):
     return Response(serializer.data)
 
 
-import threading
-from django.core.management import call_command
-import sys
-
-class TeeStream:
-    def __init__(self, stream1, stream2):
-        self.stream1 = stream1
-        self.stream2 = stream2
-        
-    def write(self, data):
-        self.stream1.write(data)
-        self.stream2.write(data)
-        self.stream1.flush()
-        self.stream2.flush()
-        
-    def flush(self):
-        self.stream1.flush()
-        self.stream2.flush()
-
-def _run_watcher(daily_chronicle=True):
-    try:
-        args = ["--auto-index"]
-        if not daily_chronicle:
-            args.append("--no-daily-chronicle")
-            
-        print(f"\n--- [AUTOMATION] Starting: python manage.py watcher {' '.join(args)} ---")
-        import os
-        from django.conf import settings
-        log_path = os.path.join(settings.BASE_DIR, "watcher_latest.log")
-        
-        with open(log_path, "w") as f:
-            f.write("Starting watcher...\n")
-            
-            tee_out = TeeStream(sys.stdout, f)
-            tee_err = TeeStream(sys.stderr, f)
-            
-            call_command("watcher", *args, stdout=tee_out, stderr=tee_err)
-            f.write("\nWatcher finished.\n")
-            
-        print("--- [AUTOMATION] Watcher run finished. Waiting for next poll... ---\n")
-    except Exception as e:
-        print(f"Error running watcher: {e}")
-
+from watcher.services.watcher_launcher import SubprocessWatcherLauncher
 from django.views.decorators.csrf import csrf_exempt
 
 @csrf_exempt
 @api_view(["POST"])
 def trigger_run(request):
-    # Only start if one is not already running
-    running = AutomationRun.objects.filter(status=AutomationRun.Status.RUNNING).exists()
-    if running:
+    launched = SubprocessWatcherLauncher.launch()
+    if not launched:
         return Response({"status": "already_running"})
         
-    daily_chronicle = request.data.get("daily_chronicle", True)
-
-    thread = threading.Thread(target=_run_watcher, args=(daily_chronicle,))
-    thread.daemon = True
-    thread.start()
     return Response({"status": "started"})
 
 
