@@ -15,12 +15,18 @@ class FilingRegistrationService:
     This does not perform parsing/chunking.
     It only creates the durable DB record and queues it for ingestion.
 
-    accepted_at is optional so all existing callers remain compatible.
+    accepted_at, entry_session, and entry_rule are optional so
+    existing callers that do not resolve market-session metadata
+    remain compatible.
     """
+
+    VALID_ENTRY_RULES = {
+        "T_PLUS_1",
+        "SAME_SESSION",
+    }
 
     def __init__(self, automation_run=None):
         self.automation_run = automation_run
-
 
     @transaction.atomic
     def register(
@@ -38,6 +44,7 @@ class FilingRegistrationService:
         source_url,
         accepted_at=None,
         entry_session=None,
+        entry_rule=None,
         sec_item_codes="",
         parsed_item_codes="",
         item_codes_match=None,
@@ -62,6 +69,40 @@ class FilingRegistrationService:
             sequence
         )
 
+        # --------------------------------
+        # Entry-rule provenance validation
+        # --------------------------------
+
+        entry_rule = (
+            str(entry_rule)
+            .strip()
+            .upper()
+            if entry_rule
+            else None
+        )
+
+        if (
+            entry_session is not None
+            and not entry_rule
+        ):
+            raise ValueError(
+                "entry_rule is required when "
+                "entry_session is provided."
+            )
+
+        if (
+            entry_rule is not None
+            and entry_rule
+            not in self.VALID_ENTRY_RULES
+        ):
+            raise ValueError(
+                f"Unsupported entry_rule: "
+                f"{entry_rule}"
+            )
+
+        # --------------------------------
+        # Company
+        # --------------------------------
 
         company, _ = (
             Company.objects.update_or_create(
@@ -76,6 +117,9 @@ class FilingRegistrationService:
             )
         )
 
+        # --------------------------------
+        # Filing
+        # --------------------------------
 
         filing, created = (
             Filing.objects.get_or_create(
@@ -99,6 +143,10 @@ class FilingRegistrationService:
 
                     "entry_session": (
                         entry_session
+                    ),
+
+                    "entry_rule": (
+                        entry_rule
                     ),
 
                     "report_date": (
@@ -154,6 +202,9 @@ class FilingRegistrationService:
             )
         )
 
+        # --------------------------------
+        # Existing filing update
+        # --------------------------------
 
         if not created:
 
@@ -177,7 +228,6 @@ class FilingRegistrationService:
                 or ""
             )
 
-
             update_fields = [
                 "form",
                 "filing_date",
@@ -185,7 +235,6 @@ class FilingRegistrationService:
                 "local_path",
                 "source_url",
             ]
-
 
             if self.automation_run is not None:
 
@@ -197,7 +246,6 @@ class FilingRegistrationService:
                     "automation_run"
                 )
 
-
             if accepted_at is not None:
 
                 filing.accepted_at = (
@@ -208,17 +256,68 @@ class FilingRegistrationService:
                     "accepted_at"
                 )
 
+            # --------------------------------
+            # Entry-session provenance
+            # --------------------------------
 
             if entry_session is not None:
+
+                # Historical row already has an entry session,
+                # but its originating rule is unknown.
+                # Do not silently assign provenance.
+                if (
+                    filing.entry_session
+                    is not None
+                    and not filing.entry_rule
+                ):
+                    raise ValueError(
+                        "Existing filing has an "
+                        "entry_session without an "
+                        "entry_rule. A full "
+                        "entry-session re-stamp "
+                        "is required."
+                    )
+
+                # Do not silently mix two entry-rule
+                # regimes in the same stored dataset.
+                if (
+                    filing.entry_rule
+                    and entry_rule
+                    and filing.entry_rule
+                    != entry_rule
+                ):
+                    raise ValueError(
+                        "ENTRY_RULE changed from "
+                        f"{filing.entry_rule} "
+                        f"to {entry_rule}. "
+                        "A full entry-session "
+                        "re-stamp is required."
+                    )
 
                 filing.entry_session = (
                     entry_session
                 )
 
-                update_fields.append(
-                    "entry_session"
+                filing.entry_rule = (
+                    entry_rule
                 )
 
+                update_fields.extend(
+                    [
+                        "entry_session",
+                        "entry_rule",
+                    ]
+                )
+
+            if report_date is not None:
+
+                filing.report_date = (
+                    report_date
+                )
+
+                update_fields.append(
+                    "report_date"
+                )
 
             if report_date is not None:
 
@@ -241,7 +340,6 @@ class FilingRegistrationService:
                     "sec_item_codes"
                 )
 
-
             if parsed_item_codes:
 
                 filing.parsed_item_codes = (
@@ -252,7 +350,6 @@ class FilingRegistrationService:
                     "parsed_item_codes"
                 )
 
-
             if item_codes_match is not None:
 
                 filing.item_codes_match = (
@@ -262,7 +359,6 @@ class FilingRegistrationService:
                 update_fields.append(
                     "item_codes_match"
                 )
-
 
             filing.flag = flag
 
@@ -277,7 +373,6 @@ class FilingRegistrationService:
                 ]
             )
 
-
             if filing.downloaded_at is None:
 
                 filing.downloaded_at = (
@@ -288,16 +383,55 @@ class FilingRegistrationService:
                     "downloaded_at"
                 )
 
-
             update_fields.append(
                 "updated_at"
             )
-
 
             filing.save(
                 update_fields=update_fields
             )
 
+        # --------------------------------
+        # 8-K/A amendment relationship
+        # --------------------------------
+
+        if (
+            form == "8-K/A"
+            and filing.report_date
+        ):
+
+            original = (
+                Filing.objects.filter(
+                    company=company,
+                    form="8-K",
+                    report_date=(
+                        filing.report_date
+                    ),
+                )
+                .order_by(
+                    "-filing_date",
+                    "-accepted_at",
+                )
+                .first()
+            )
+
+            if (
+                original
+                and filing.amends != original
+            ):
+
+                filing.amends = original
+
+                filing.save(
+                    update_fields=[
+                        "amends",
+                        "updated_at",
+                    ]
+                )
+
+        # --------------------------------
+        # Queue ingestion
+        # --------------------------------
 
         if form == "8-K/A" and filing.report_date:
             original = Filing.objects.filter(
@@ -320,6 +454,5 @@ class FilingRegistrationService:
                 ),
             },
         )
-
 
         return filing

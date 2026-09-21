@@ -148,22 +148,49 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database3
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': _env_str('DB_NAME', 'sec_agent'),
+#         'USER': _env_str('DB_USER', 'sec_agent_user'),
+#         'PASSWORD': _env_str('DB_PASSWORD'),
+#         'HOST': _env_str('DB_HOST', '127.0.0.1'),
+#         'PORT': _env_str('DB_PORT', '5433'),
+#         'CONN_MAX_AGE': 60,
+#         'CONN_HEALTH_CHECKS': True,
+#         'OPTIONS': {
+#             'connect_timeout': 10,
+#         },
+#     }
+# }
+
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': _env_str('DB_NAME', 'sec_agent'),
-        'USER': _env_str('DB_USER', 'sec_agent_user'),
-        'PASSWORD': _env_str('DB_PASSWORD'),
-        'HOST': _env_str('DB_HOST', '127.0.0.1'),
-        'PORT': _env_str('DB_PORT', '5433'),
-        'CONN_MAX_AGE': 60,
-        'CONN_HEALTH_CHECKS': True,
-        'OPTIONS': {
-            'connect_timeout': 10,
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _env_str("DB_NAME", "sec_agent"),
+        "USER": _env_str("DB_USER", "sec_agent_user"),
+        "PASSWORD": _env_str("DB_PASSWORD"),
+        "HOST": _env_str("DB_HOST", "127.0.0.1"),
+        "PORT": _env_str("DB_PORT", "5433"),
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "connect_timeout": 10,
+        },
+
+        "TEST": {
+            "NAME": "test_sec_agent",
         },
     }
 }
-
+if (
+    DATABASES["default"]["TEST"]["NAME"]
+    == DATABASES["default"]["NAME"]
+):
+    raise RuntimeError(
+        "Unsafe database configuration: "
+        "test database must be different from the application database."
+    )
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -188,7 +215,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Kolkata'
 
 USE_I18N = True
 

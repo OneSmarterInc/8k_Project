@@ -38,7 +38,6 @@ class FilingProcessingService:
         self.post_processing = post_processing_service
         self.output = output_service
 
-
     @staticmethod
     def _result():
         return {
@@ -50,9 +49,11 @@ class FilingProcessingService:
             "errors": [],
         }
 
-
     @staticmethod
-    def _merge_post_result(result, post_result):
+    def _merge_post_result(
+        result,
+        post_result,
+    ):
 
         result["indexed"] += post_result.get(
             "indexed",
@@ -71,7 +72,6 @@ class FilingProcessingService:
             )
         )
 
-
     def process(
         self,
         *,
@@ -84,33 +84,53 @@ class FilingProcessingService:
 
         result = self._result()
 
-        accession_number = filing["accession_number"]
-        primary_document = filing["primary_document"]
-        filing_date = filing["filing_date"]
+        accession_number = filing[
+            "accession_number"
+        ]
 
+        primary_document = filing[
+            "primary_document"
+        ]
+
+        filing_date = filing[
+            "filing_date"
+        ]
 
         try:
+
+            # --------------------------------
+            # Resolve SEC document
+            # --------------------------------
 
             base_url, document = (
                 self.downloader.resolve_document(
                     cik=cik,
-                    accession_number=accession_number,
+                    accession_number=(
+                        accession_number
+                    ),
                     file_type=form,
-                    hint_filename=primary_document,
+                    hint_filename=(
+                        primary_document
+                    ),
                 )
             )
 
-
             sequence = str(
-                document.get("sequence") or ""
+                document.get(
+                    "sequence"
+                )
+                or ""
             ).strip()
-
 
             if not sequence:
                 raise ValueError(
-                    "SEC document sequence could not be resolved"
+                    "SEC document sequence "
+                    "could not be resolved"
                 )
 
+            # --------------------------------
+            # Duplicate check
+            # --------------------------------
 
             if self.registry.is_downloaded(
                 cik,
@@ -120,44 +140,68 @@ class FilingProcessingService:
                 result["skipped"] = 1
                 return result
 
+            # --------------------------------
+            # Resolve filename / type
+            # --------------------------------
 
             file_type = (
                 document.get("type")
                 or form
             )
 
-            original_filename = document["filename"]
-
+            original_filename = (
+                document["filename"]
+            )
 
             local_filename = (
-                self.downloader.build_filename(
+                self.downloader
+                .build_filename(
                     form=form,
                     file_type=file_type,
-                    filing_date=filing_date,
-                    original_filename=original_filename,
+                    filing_date=(
+                        filing_date
+                    ),
+                    original_filename=(
+                        original_filename
+                    ),
                 )
             )
 
+            # --------------------------------
+            # Download
+            # --------------------------------
 
-            download = self.downloader.download(
-                cik=cik,
-                accession_number=accession_number,
-                file_type=file_type,
-                sequence=sequence,
-                local_filename=local_filename,
-                hint_filename=primary_document,
-                document=document,
-                base_url=base_url,
-                ticker=ticker,
-                form=form,
+            download = (
+                self.downloader.download(
+                    cik=cik,
+                    accession_number=(
+                        accession_number
+                    ),
+                    file_type=file_type,
+                    sequence=sequence,
+                    local_filename=(
+                        local_filename
+                    ),
+                    hint_filename=(
+                        primary_document
+                    ),
+                    document=document,
+                    base_url=base_url,
+                    ticker=ticker,
+                    form=form,
+                )
             )
 
-
             downloaded_sequence = str(
-                download.get("sequence")
+                download.get(
+                    "sequence"
+                )
                 or sequence
             ).strip()
 
+            # --------------------------------
+            # Registry mark
+            # --------------------------------
 
             self.registry.mark_downloaded(
                 cik,
@@ -165,72 +209,104 @@ class FilingProcessingService:
                 downloaded_sequence,
             )
 
-
             result["downloaded"] = 1
 
+            # --------------------------------
+            # Resolve downloaded file metadata
+            # --------------------------------
 
             saved_path = str(
                 download["path"]
             )
 
-
-            saved_filename = Path(
-                saved_path
-            ).name
-
+            saved_filename = (
+                Path(
+                    saved_path
+                ).name
+            )
 
             resolved_form_type = str(
                 document.get("type")
                 or form
             ).strip()
 
-
             source_url = str(
                 download.get("url")
                 or ""
             ).strip()
 
+            # --------------------------------
+            # Filing metadata
+            # --------------------------------
 
-            metadata = self.metadata_service.prepare(
-                filing=filing,
-                expected_cik=cik,
-                expected_company_name=company.get(
-                    "name",
-                    "",
-                ),
-                expected_ticker=ticker,
+            metadata = (
+                self.metadata_service
+                .prepare(
+                    filing=filing,
+                    expected_cik=cik,
+                    expected_company_name=(
+                        company.get(
+                            "name",
+                            "",
+                        )
+                    ),
+                    expected_ticker=ticker,
+                )
             )
-
 
             self.output.new_filing(
                 ticker=ticker,
-                form_type=resolved_form_type,
+                form_type=(
+                    resolved_form_type
+                ),
                 filing_date=filing_date,
-                accession_number=accession_number,
-                sequence=downloaded_sequence,
+                accession_number=(
+                    accession_number
+                ),
+                sequence=(
+                    downloaded_sequence
+                ),
                 filename=saved_filename,
                 saved_path=saved_path,
                 source_url=source_url,
             )
 
+            # --------------------------------
+            # Database registration
+            # --------------------------------
 
             try:
 
                 registered_filing = (
-                    self.registration_service.register(
+                    self.registration_service
+                    .register(
                         ticker=ticker,
                         cik=cik,
-                        company_name=company.get(
-                            "name",
-                            "",
+                        company_name=(
+                            company.get(
+                                "name",
+                                "",
+                            )
                         ),
                         form=form,
-                        accession_number=accession_number,
-                        sequence=downloaded_sequence,
-                        filing_date=filing_date,
-                        primary_document=primary_document,
-                        local_path=download["path"],
-                        source_url=download["url"],
+                        accession_number=(
+                            accession_number
+                        ),
+                        sequence=(
+                            downloaded_sequence
+                        ),
+                        filing_date=(
+                            filing_date
+                        ),
+                        primary_document=(
+                            primary_document
+                        ),
+                        local_path=(
+                            download["path"]
+                        ),
+                        source_url=(
+                            download["url"]
+                        ),
 
                         accepted_at=getattr(
                             metadata,
@@ -244,7 +320,15 @@ class FilingProcessingService:
                             None,
                         ),
 
-                        report_date=filing.get("report_date"),
+                        entry_rule=getattr(
+                            metadata,
+                            "entry_rule",
+                            None,
+                        ),
+
+                        report_date=filing.get(
+                            "report_date"
+                        ),
 
                         sec_item_codes=getattr(
                             metadata,
@@ -278,71 +362,86 @@ class FilingProcessingService:
                     )
                 )
 
-
                 self.output.status(
                     "REGISTRATION",
                     "SUCCESS",
                 )
-
 
                 self.output.metadata(
                     metadata=metadata,
                     form=form,
                 )
 
-
             except Exception as exc:
 
                 result["errors"].append(
-                    "Knowledge-base registration failed for "
-                    f"{accession_number}: {exc}"
+                    "Knowledge-base "
+                    "registration failed for "
+                    f"{accession_number}: "
+                    f"{exc}"
                 )
-
 
                 self.output.status(
                     "REGISTRATION",
                     f"FAILED ({exc})",
                 )
 
-
                 FailureTrackingService.record(
-                    stage=FailureEvent.Stage.REGISTRATION,
-                    code=FailureEvent.Code.REGISTRATION_FAILED,
+                    stage=(
+                        FailureEvent
+                        .Stage
+                        .REGISTRATION
+                    ),
+                    code=(
+                        FailureEvent
+                        .Code
+                        .REGISTRATION_FAILED
+                    ),
                     message=str(exc),
                 )
 
-
                 return result
 
+            # --------------------------------
+            # Post-processing
+            # --------------------------------
 
-
-            post_result = self.post_processing.run(
-                registered_filing=registered_filing,
-                form=form,
-                accession_number=accession_number,
-                metadata=metadata,
-                filename=saved_filename,
-                saved_path=saved_path,
-                source_url=source_url,
+            post_result = (
+                self.post_processing.run(
+                    registered_filing=(
+                        registered_filing
+                    ),
+                    form=form,
+                    accession_number=(
+                        accession_number
+                    ),
+                    metadata=metadata,
+                    filename=(
+                        saved_filename
+                    ),
+                    saved_path=(
+                        saved_path
+                    ),
+                    source_url=(
+                        source_url
+                    ),
+                )
             )
-
 
             self._merge_post_result(
                 result,
                 post_result,
             )
 
-
             return result
-
-
 
         except Exception as exc:
 
             result["failed"] = 1
 
             result["errors"].append(
-                f"{accession_number}: {exc}"
+                f"{accession_number}: "
+                f"{exc}"
             )
 
             return result

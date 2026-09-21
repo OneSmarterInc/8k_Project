@@ -50,12 +50,6 @@ class MarketSessionService:
 
     CALENDAR_NAME = "NYSE"
 
-    ENTRY_RULE = getattr(
-        settings,
-        "ENTRY_RULE",
-        "T_PLUS_1",
-    )
-
     def __init__(
         self,
         calendar=None,
@@ -65,6 +59,21 @@ class MarketSessionService:
             or mcal.get_calendar(
                 self.CALENDAR_NAME
             )
+        )
+
+    @property
+    def entry_rule(self):
+        """
+        Read ENTRY_RULE at runtime.
+
+        This intentionally does not cache the Django setting so that
+        override_settings() works correctly in tests and runtime
+        configuration is not bound when this module is imported.
+        """
+        return getattr(
+            settings,
+            "ENTRY_RULE",
+            "T_PLUS_1",
         )
 
     @classmethod
@@ -135,14 +144,19 @@ class MarketSessionService:
             Monday 3:30 PM ET
                 -> Tuesday
 
-
             Monday 4:45 PM ET
                 -> Tuesday
-
 
             Saturday
                 -> Monday
         """
+
+        # Read the rule when this calculation actually runs.
+        #
+        # Do not bind this at module/class import time:
+        # Django override_settings() must be able to switch
+        # the rule during tests.
+        entry_rule = self.entry_rule
 
         accepted_utc = (
             self._normalize_datetime(
@@ -204,7 +218,7 @@ class MarketSessionService:
             #
             # EDGAR acceptance -> next trading session
             # --------------------------------------------------
-            if self.ENTRY_RULE == "T_PLUS_1":
+            if entry_rule == "T_PLUS_1":
 
                 if index + 1 < len(sessions):
 
@@ -214,11 +228,10 @@ class MarketSessionService:
 
                     return next_label.date()
 
-
             # --------------------------------------------------
             # Optional legacy behaviour
             # --------------------------------------------------
-            elif self.ENTRY_RULE == "SAME_SESSION":
+            elif entry_rule == "SAME_SESSION":
 
                 if accepted_utc < market_close_utc:
 
@@ -232,10 +245,9 @@ class MarketSessionService:
 
                     return next_label.date()
 
-
             else:
                 raise ValueError(
-                    f"Unsupported ENTRY_RULE: {self.ENTRY_RULE}"
+                    f"Unsupported ENTRY_RULE: {entry_rule}"
                 )
 
         raise RuntimeError(

@@ -28,6 +28,7 @@ class FilingMetadata:
     accepted_at_display: str = ""
 
     entry_session: date | None = None
+    entry_rule: str | None = None
 
     sec_item_codes: tuple[str, ...] = ()
 
@@ -77,7 +78,6 @@ class FilingMetadataService:
             or CompanyVerificationService()
         )
 
-
     @staticmethod
     def _normalize_item_codes(value):
 
@@ -108,7 +108,6 @@ class FilingMetadataService:
 
         return tuple(result)
 
-
     def prepare(
         self,
         *,
@@ -136,7 +135,6 @@ class FilingMetadataService:
                 )
             ),
         )
-
 
         # -------------------------------
         # SEC item verification
@@ -172,12 +170,10 @@ class FilingMetadataService:
                 if error:
                     metadata.item_verification_error = error
 
-
             except Exception as exc:
 
                 metadata.item_verification_error = str(exc)
                 metadata.item_codes_match = None
-
 
         # -------------------------------
         # Acceptance timestamp
@@ -189,7 +185,6 @@ class FilingMetadataService:
             metadata.flag_reason = (
                 "MISSING_ACCEPTANCE_TS"
             )
-
 
         else:
 
@@ -209,7 +204,6 @@ class FilingMetadataService:
                     )
                 )
 
-
             except Exception as exc:
 
                 metadata.timestamp_error = str(exc)
@@ -227,7 +221,6 @@ class FilingMetadataService:
                     message=str(exc),
                 )
 
-
         # -------------------------------
         # Entry trading session
         # -------------------------------
@@ -236,6 +229,11 @@ class FilingMetadataService:
 
             try:
 
+                active_entry_rule = (
+                    self.market_session_service
+                    .entry_rule
+                )
+
                 metadata.entry_session = (
                     self.market_session_service
                     .entry_session(
@@ -243,11 +241,15 @@ class FilingMetadataService:
                     )
                 )
 
+                metadata.entry_rule = (
+                    active_entry_rule
+                )
 
             except Exception as exc:
 
                 metadata.session_error = str(exc)
                 metadata.entry_session = None
+                metadata.entry_rule = None
 
                 metadata.flag = True
                 metadata.flag_reason = (
@@ -260,7 +262,6 @@ class FilingMetadataService:
                     message=str(exc),
                 )
 
-
         # -------------------------------
         # Company verification
         # -------------------------------
@@ -272,7 +273,6 @@ class FilingMetadataService:
             )
             or ""
         ).strip()
-
 
         if sec_cik:
 
@@ -302,15 +302,11 @@ class FilingMetadataService:
                     )
                 )
 
-
             except Exception as exc:
 
                 metadata.company_verification_error = str(exc)
 
-
         return metadata
-
-
 
     def verify_items(
         self,
@@ -329,11 +325,9 @@ class FilingMetadataService:
 
             return None, ""
 
-
         if not sec_item_codes:
 
             return None, ""
-
 
         try:
 
@@ -346,7 +340,6 @@ class FilingMetadataService:
             )
 
             return result, ""
-
 
         except Exception as exc:
 

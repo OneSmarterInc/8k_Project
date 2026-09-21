@@ -96,7 +96,12 @@ class Filing(models.Model):
         blank=True,
         db_index=True,
     )
-
+    entry_rule = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     sec_item_codes = models.TextField(
         blank=True,
         default="",
