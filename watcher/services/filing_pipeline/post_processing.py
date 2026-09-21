@@ -213,6 +213,11 @@ class FilingPostProcessingService:
         # -------------------------
         try:
 
+            FailureTrackingService.resolve(
+                filing=registered_filing,
+                stage=FailureEvent.Stage.SUMMARY,
+            )
+
             if self.daily_chronicle:
 
                 email_sent = (
@@ -256,6 +261,15 @@ class FilingPostProcessingService:
 
 
         if email_sent:
+
+            from django.utils import timezone
+            registered_filing.email_sent_at = timezone.now()
+            registered_filing.save(update_fields=["email_sent_at", "updated_at"])
+
+            FailureTrackingService.resolve(
+                filing=registered_filing,
+                stage=FailureEvent.Stage.EMAIL,
+            )
 
             self.output.status(
                 "EMAIL",

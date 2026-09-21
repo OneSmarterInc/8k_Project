@@ -656,22 +656,3 @@ class FilingNotificationService:
             )
 
             return False
-
-        except Exception:
-            # SMTP/email problems must never stop:
-            #
-            # - downloads
-            # - registration
-            # - indexing
-            # - summary generation
-            # - remaining watcher processing
-
-            logger.exception(
-                "SEC filing email failed: "
-                "ticker=%s form=%s accession=%s",
-                ticker,
-                form_type,
-                accession_number,
-            )
-
-            return False

@@ -137,8 +137,52 @@ class FilingProcessingService:
                 accession_number,
                 sequence,
             ):
-                result["skipped"] = 1
-                return result
+                from watcher.knowledge_base.models import Filing
+                from watcher.services.failure_tracking_service import FailureTrackingService
+                
+                existing_filing = Filing.objects.filter(
+                    company__cik=cik,
+                    accession_number=accession_number,
+                    sequence=sequence
+                ).first()
+                
+                if existing_filing:
+                    unresolved = FailureTrackingService.unresolved_for_filing(existing_filing)
+                    
+                    if unresolved.exists():
+                        # Unresolved failures exist, resume processing!
+                        # We need metadata to run post_processing
+                        metadata = self.metadata_service.prepare(
+                            filing=filing,
+                            expected_cik=cik,
+                            expected_company_name=company.get("name", ""),
+                            expected_ticker=ticker,
+                        )
+                        
+                        file_type = document.get("type") or form
+                        saved_filename = existing_filing.primary_document or Path(existing_filing.local_path).name
+                        
+                        post_result = self.post_processing.run(
+                            registered_filing=existing_filing,
+                            form=form,
+                            accession_number=accession_number,
+                            metadata=metadata,
+                            filename=saved_filename,
+                            saved_path=existing_filing.local_path,
+                            source_url=existing_filing.source_url,
+                        )
+                        
+                        self._merge_post_result(result, post_result)
+                        return result
+                    else:
+                        # Fully processed
+                        result["skipped"] = 1
+                        return result
+                else:
+                    # Registry says downloaded but no Filing exists?
+                    # This means Registration failed previously. Do not skip!
+                    # Continue normal flow (it won't redownload physical file if it exists, but will re-register)
+                    pass
 
             # --------------------------------
             # Resolve filename / type

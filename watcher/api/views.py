@@ -52,16 +52,19 @@ def filings(request):
 
     import datetime
     
+    start_date = datetime.datetime(2026, 9, 14, tzinfo=datetime.timezone.utc)
+    
     status_param = request.GET.get("status")
     if status_param == "failed":
-        queryset = queryset.filter(ingestion_status="failed")
-    else:
-        # By default, only show filings that successfully generated a summary and are from Sept 14, 2026 onward
-        start_date = datetime.datetime(2026, 9, 14, tzinfo=datetime.timezone.utc)
         queryset = queryset.filter(
-            summary_cache__isnull=False,
-            accepted_at__gte=start_date
-        )
+            failure_events__isnull=False,
+            failure_events__resolved_at__isnull=True
+        ).distinct()
+    else:
+        # By default, only show filings that successfully generated a summary
+        queryset = queryset.filter(
+            summary_cache__isnull=False
+        ).exclude(failure_events__isnull=False, failure_events__resolved_at__isnull=True)
 
     ticker = request.GET.get("ticker")
     form = request.GET.get("form")

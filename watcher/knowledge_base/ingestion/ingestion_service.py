@@ -264,6 +264,11 @@ class FilingIngestionService:
                     ]
                 )
 
+            FailureTrackingService.resolve(
+                filing=filing,
+                stage=FailureEvent.Stage.INGESTION,
+            )
+
             return IngestionResult(
                 filing_id=filing.pk,
                 chunks_created=len(chunks),
@@ -395,6 +400,11 @@ class FilingIngestionService:
                 ]
             )
 
+        FailureTrackingService.resolve(
+            filing=filing,
+            stage=FailureEvent.Stage.INGESTION,
+        )
+
     def _begin_job(
         self,
         filing: Filing,
@@ -497,7 +507,6 @@ class FilingIngestionService:
 
             job.last_error = str(error)
             job.completed_at = now
-
             job.save(
                 update_fields=[
                     "status",
@@ -505,4 +514,11 @@ class FilingIngestionService:
                     "completed_at",
                     "updated_at",
                 ]
+            )
+            
+            FailureTrackingService.record(
+                filing=locked_filing,
+                stage=FailureEvent.Stage.INGESTION,
+                code=FailureEvent.Code.INGESTION_FAILED,
+                message=str(error),
             )
