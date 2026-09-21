@@ -263,12 +263,7 @@ class FilingIngestionService:
                         "updated_at",
                     ]
                 )
-                FailureTrackingService.record(
-                    filing=locked_filing,
-                    stage=FailureEvent.Stage.INGESTION,
-                    code=FailureEvent.Code.INGESTION_FAILED,
-                    message=error,
-                )
+
             return IngestionResult(
                 filing_id=filing.pk,
                 chunks_created=len(chunks),

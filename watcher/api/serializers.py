@@ -72,6 +72,8 @@ class FilingSerializer(serializers.ModelSerializer):
             "classification",
             "amends_accession",
             "amended_by_accession",
+            "sec_item_codes",
+            "item_codes_match",
         ]
 
 
