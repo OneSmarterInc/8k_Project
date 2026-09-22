@@ -70,6 +70,8 @@ class KnowledgeBaseService:
             or IntentRouter()
         )
 
+        # Keep the QA service wiring unchanged so existing construction,
+        # dependency injection, and tests are not affected.
         self.qa_service = (
             qa_service
             or GroundedQAService()
@@ -110,6 +112,7 @@ class KnowledgeBaseService:
                 question,
                 ticker=ticker,
             )
+
         except CompanyResolverError as exc:
             raise KnowledgeBaseServiceError(
                 str(exc)
@@ -131,22 +134,39 @@ class KnowledgeBaseService:
             else route.detected_form
         )
 
+        # --------------------------------------------------
+        # Chatbot / RAG Q&A
+        # --------------------------------------------------
         if route.intent == KnowledgeIntent.NORMAL_QA:
-            qa_result = self.qa_service.answer(
-                question,
-                ticker=resolved_ticker,
-                form=effective_form,
-                top_k=top_k,
+
+            # Chatbot / RAG execution is intentionally disabled.
+            #
+            # Keep the original implementation here so it can be
+            # restored later without affecting company summaries
+            # or change detection.
+            #
+            # qa_result = self.qa_service.answer(
+            #     question,
+            #     ticker=resolved_ticker,
+            #     form=effective_form,
+            #     top_k=top_k,
+            # )
+            #
+            # return KnowledgeBaseResult(
+            #     intent=route.intent,
+            #     status="completed",
+            #     result=qa_result,
+            #     message=route.reason,
+            #     resolved_company=company,
+            # )
+
+            raise KnowledgeBaseServiceError(
+                "Chatbot functionality is currently disabled."
             )
 
-            return KnowledgeBaseResult(
-                intent=route.intent,
-                status="completed",
-                result=qa_result,
-                message=route.reason,
-                resolved_company=company,
-            )
-
+        # --------------------------------------------------
+        # Company summary
+        # --------------------------------------------------
         if (
             route.intent
             == KnowledgeIntent.COMPANY_SUMMARY
@@ -169,6 +189,9 @@ class KnowledgeBaseService:
                 resolved_company=company,
             )
 
+        # --------------------------------------------------
+        # Change detection
+        # --------------------------------------------------
         if (
             route.intent
             == KnowledgeIntent.CHANGE_DETECTION
