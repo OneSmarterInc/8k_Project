@@ -9,7 +9,9 @@ from watcher.knowledge_base.models import (
     Filing,
     IngestionJob,
 )
-
+from watcher.services.market_session import (
+    VALID_ENTRY_RULES,
+)
 
 class FilingRegistrationService:
     """
@@ -23,10 +25,6 @@ class FilingRegistrationService:
     remain compatible.
     """
 
-    VALID_ENTRY_RULES = {
-        "T_PLUS_1",
-        "SAME_SESSION",
-    }
 
     def __init__(self, automation_run=None):
         self.automation_run = automation_run
@@ -96,7 +94,7 @@ class FilingRegistrationService:
         if (
             entry_rule is not None
             and entry_rule
-            not in self.VALID_ENTRY_RULES
+            not in VALID_ENTRY_RULES
         ):
             raise ValueError(
                 f"Unsupported entry_rule: "

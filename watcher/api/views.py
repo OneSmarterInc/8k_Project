@@ -40,21 +40,70 @@ def runs(request):
 
     return Response(serializer.data)
 
-
 @csrf_exempt
 @api_view(["POST"])
 def trigger_run(request):
-    launched = SubprocessWatcherLauncher.launch()
+    """
+    Start one watcher run.
+
+    W-029:
+    Propagate the Daily Chronicle choice from the API
+    to SubprocessWatcherLauncher.
+
+    Existing clients remain compatible because
+    Daily Chronicle defaults to True.
+    """
+
+    daily_chronicle = (
+        request.data.get(
+            "daily_chronicle",
+            True,
+        )
+    )
+
+    # Do not use bool(value) here because:
+    #
+    # bool("false") == True
+    #
+    # Require a genuine JSON boolean.
+    if not isinstance(
+        daily_chronicle,
+        bool,
+    ):
+        return Response(
+            {
+                "status": "error",
+                "message": (
+                    "daily_chronicle must be "
+                    "true or false."
+                ),
+            },
+            status=400,
+        )
+
+    launched = (
+        SubprocessWatcherLauncher.launch(
+            daily_chronicle=(
+                daily_chronicle
+            ),
+        )
+    )
 
     if not launched:
-        return Response({
-            "status": "already_running"
-        })
+        return Response(
+            {
+                "status": "already_running"
+            }
+        )
 
-    return Response({
-        "status": "started"
-    })
-
+    return Response(
+        {
+            "status": "started",
+            "daily_chronicle": (
+                daily_chronicle
+            ),
+        }
+    )
 
 @api_view(["GET"])
 def run_logs(request):

@@ -35,33 +35,45 @@ class SubprocessWatcherLauncher:
         return reconcile_stale_running_runs()
     
     @classmethod
-    def launch(cls, force=False):
+    def launch(
+        cls,
+        force=False,
+        daily_chronicle=True,
+    ):
         """
         Launch the watcher as an independent subprocess.
 
         Existing behaviour is preserved:
         - Uses the same Python interpreter.
         - Runs manage.py watcher --auto-index.
+        - Daily Chronicle remains enabled by default.
+        - Adds --no-daily-chronicle only when explicitly disabled.
         - Uses watcher_latest.log.
         - Prevents duplicate launches unless force=True.
         - Returns True when a launch is attempted.
-        - Returns False when an existing RUNNING row prevents launch.
-
-        The only lifecycle change is that the child no longer depends on a
-        PIPE-reading thread owned by Django.
+        - Returns False when another watcher is already running.
         """
+
         if not force and cls.is_running():
             logger.warning(
-                "Watcher launch skipped: AutomationRun is currently RUNNING."
+                "Watcher launch skipped: "
+                "AutomationRun is currently RUNNING."
             )
             return False
 
-        logger.info("Spawning watcher subprocess...")
+        logger.info(
+            "Spawning watcher subprocess..."
+        )
 
-        base_dir = str(settings.BASE_DIR)
-        log_path = os.path.join(base_dir, "watcher_latest.log")
+        base_dir = str(
+            settings.BASE_DIR
+        )
 
-        # Keep the existing watcher command unchanged.
+        log_path = os.path.join(
+            base_dir,
+            "watcher_latest.log",
+        )
+
         cmd = [
             sys.executable,
             "-u",
@@ -70,45 +82,58 @@ class SubprocessWatcherLauncher:
             "--auto-index",
         ]
 
-        # Preserve existing behaviour: each new watcher launch starts a fresh
-        # watcher_latest.log file.
-        with open(log_path, "wb") as log_file:
+        # W-029:
+        # The watcher command already supports this flag.
+        # Only append it when Daily Chronicle is explicitly disabled.
+        if not daily_chronicle:
+            cmd.append(
+                "--no-daily-chronicle"
+            )
+
+        # Each watcher launch starts a fresh log file.
+        with open(
+            log_path,
+            "wb",
+        ) as log_file:
             log_file.write(
-                b"Starting watcher via SubprocessWatcherLauncher...\n"
+                b"Starting watcher via "
+                b"SubprocessWatcherLauncher...\n"
             )
 
         popen_kwargs = {
             "cwd": base_dir,
 
-            # IMPORTANT:
-            # Send output directly to the log file rather than PIPE.
-            # The child therefore does not depend on Django draining stdout.
+            # Child output goes directly to the log file.
             "stderr": subprocess.STDOUT,
 
-            # The watcher is non-interactive.
+            # Watcher is non-interactive.
             "stdin": subprocess.DEVNULL,
 
             "close_fds": True,
         }
 
-        # Detach from the parent process/session.
+        # Preserve W-023 detached subprocess behaviour.
         if os.name == "nt":
-            # Windows:
-            # do not inherit Django's console/process group.
-            popen_kwargs["creationflags"] = (
+            popen_kwargs[
+                "creationflags"
+            ] = (
                 subprocess.DETACHED_PROCESS
                 | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
-            # Linux/macOS:
-            # create a new session so the watcher survives the launching
-            # Django process terminating.
-            popen_kwargs["start_new_session"] = True
+            popen_kwargs[
+                "start_new_session"
+            ] = True
 
-        # Popen duplicates/inherits the redirected stdout handle for the child.
-        # The parent can safely close its own file handle immediately afterward.
-        with open(log_path, "ab", buffering=0) as log_file:
-            popen_kwargs["stdout"] = log_file
+        with open(
+            log_path,
+            "ab",
+            buffering=0,
+        ) as log_file:
+
+            popen_kwargs[
+                "stdout"
+            ] = log_file
 
             process = subprocess.Popen(
                 cmd,
@@ -116,7 +141,8 @@ class SubprocessWatcherLauncher:
             )
 
         logger.info(
-            "Watcher subprocess started successfully with PID %s.",
+            "Watcher subprocess started "
+            "successfully with PID %s.",
             process.pid,
         )
 

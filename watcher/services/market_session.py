@@ -5,6 +5,13 @@ from django.conf import settings
 import pandas_market_calendars as mcal
 
 
+VALID_ENTRY_RULES = frozenset(
+    {
+        "T_PLUS_1",
+        "SAME_SESSION",
+    }
+)
+
 class MarketSessionService:
     """
     Maps an EDGAR acceptance datetime to the correct
@@ -158,12 +165,20 @@ class MarketSessionService:
         # the rule during tests.
         entry_rule = self.entry_rule
 
+# W-028:
+# Validate ENTRY_RULE before any calendar/weekend/holiday
+# branching. Otherwise an invalid rule can silently return
+# the next trading session on a non-trading day.
+        if entry_rule not in VALID_ENTRY_RULES:
+            raise ValueError(
+                f"Unsupported ENTRY_RULE: {entry_rule}"
+            )
+
         accepted_utc = (
             self._normalize_datetime(
                 accepted_at
             )
         )
-
         accepted_eastern = (
             accepted_utc.astimezone(
                 self.EASTERN
@@ -245,10 +260,7 @@ class MarketSessionService:
 
                     return next_label.date()
 
-            else:
-                raise ValueError(
-                    f"Unsupported ENTRY_RULE: {entry_rule}"
-                )
+            
 
         raise RuntimeError(
             "Unable to determine an NYSE entry session "
