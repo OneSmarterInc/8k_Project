@@ -1,8 +1,8 @@
-from datetime import date
-
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from watcher.services.sec_client import SECClient
 
-
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 class FilingDiscovery:
     """
     Retrieves company filings from the SEC submissions API and filters
@@ -61,7 +61,7 @@ class FilingDiscovery:
                 f"{', '.join(sorted(self.SUPPORTED_FORMS))}"
             )
 
-        today = date.today()
+        today = datetime.now(MARKET_TIMEZONE).date()
 
         if start_date is None:
             start_date = date(

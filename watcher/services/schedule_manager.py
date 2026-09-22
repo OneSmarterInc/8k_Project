@@ -2,17 +2,17 @@ import logging
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime
-import os
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 from watcher.models import ScheduleConfig
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
-
-tz_name = os.getenv("SCHEDULER_TIMEZONE", "America/New_York")
-tz = ZoneInfo(tz_name)
+tz = ZoneInfo(
+    settings.TIME_ZONE
+)
 
 def build_triggers_for_config(config: ScheduleConfig):
     """

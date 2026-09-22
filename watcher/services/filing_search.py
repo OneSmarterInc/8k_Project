@@ -1,10 +1,10 @@
-from datetime import date
-
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from django.conf import settings
 
 from .sec_client import SECClient
 
-
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 class FilingSearch:
     """
     EDGAR full text search.
@@ -27,7 +27,7 @@ class FilingSearch:
         self.client = client or SECClient()
 
     def search(self, cik, query="Market", forms="8-K", start_date=None, end_date=None):
-        today = date.today()
+        today = datetime.now(MARKET_TIMEZONE).date()
 
         start_date = start_date or date(today.year, 1, 1)
         end_date = end_date or today
