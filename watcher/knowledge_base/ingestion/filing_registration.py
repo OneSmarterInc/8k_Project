@@ -1,6 +1,9 @@
 from django.db import transaction
 from django.utils import timezone
 
+from watcher.knowledge_base.ingestion.amendment_linker import (
+    link_amendment,
+)
 from watcher.knowledge_base.models import (
     Company,
     Filing,
@@ -319,17 +322,6 @@ class FilingRegistrationService:
                     "report_date"
                 )
 
-            if report_date is not None:
-
-                filing.report_date = (
-                    report_date
-                )
-
-                update_fields.append(
-                    "report_date"
-                )
-
-
             if sec_item_codes:
 
                 filing.sec_item_codes = (
@@ -395,54 +387,14 @@ class FilingRegistrationService:
         # 8-K/A amendment relationship
         # --------------------------------
 
-        if (
-            form == "8-K/A"
-            and filing.report_date
-        ):
-
-            original = (
-                Filing.objects.filter(
-                    company=company,
-                    form="8-K",
-                    report_date=(
-                        filing.report_date
-                    ),
-                )
-                .order_by(
-                    "-filing_date",
-                    "-accepted_at",
-                )
-                .first()
+        if form == "8-K/A":
+            link_amendment(
+                filing
             )
-
-            if (
-                original
-                and filing.amends != original
-            ):
-
-                filing.amends = original
-
-                filing.save(
-                    update_fields=[
-                        "amends",
-                        "updated_at",
-                    ]
-                )
 
         # --------------------------------
         # Queue ingestion
         # --------------------------------
-
-        if form == "8-K/A" and filing.report_date:
-            original = Filing.objects.filter(
-                company=company,
-                form="8-K",
-                report_date=filing.report_date,
-            ).order_by("-filing_date", "-accepted_at").first()
-            if original and filing.amends != original:
-                filing.amends = original
-                filing.save(update_fields=["amends", "updated_at"])
-
 
         IngestionJob.objects.get_or_create(
             filing=filing,
