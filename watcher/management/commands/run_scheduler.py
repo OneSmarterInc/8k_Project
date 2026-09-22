@@ -47,10 +47,13 @@ class Command(BaseCommand):
         return model_to_dict(old_config) != model_to_dict(new_config)
 
     def handle(self, *args, **options):
-        import os
-        tz_name = os.getenv("SCHEDULER_TIMEZONE", "America/New_York")
-        tz = ZoneInfo(tz_name)
-        scheduler = BackgroundScheduler(timezone=tz)
+        tz = ZoneInfo(
+            settings.TIME_ZONE
+        )
+
+        scheduler = BackgroundScheduler(
+            timezone=tz
+        )
         scheduler.add_jobstore(DjangoJobStore(), "default")
         
         self.stdout.write(self.style.SUCCESS("Starting BackgroundScheduler daemon..."))
