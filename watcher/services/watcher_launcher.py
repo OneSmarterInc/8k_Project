@@ -2,7 +2,9 @@ import os
 import sys
 import subprocess
 import logging
-
+from watcher.services.watcher_lock import (
+    reconcile_stale_running_runs,
+)
 from django.conf import settings
 from watcher.models import AutomationRun
 
@@ -24,16 +26,14 @@ class SubprocessWatcherLauncher:
     @classmethod
     def is_running(cls):
         """
-        Returns True if a watcher is currently marked as running in the database.
+        Return True only when the watcher PostgreSQL advisory lock confirms
+        that a watcher process is actually running.
 
-        This remains the existing fast UI/scheduler check.
-        Strict overlap protection continues to be handled by the PostgreSQL
-        advisory lock inside watcher.py.
+        Any stale RUNNING AutomationRun rows left by a crashed process are
+        reconciled automatically.
         """
-        return AutomationRun.objects.filter(
-            status=AutomationRun.Status.RUNNING
-        ).exists()
-
+        return reconcile_stale_running_runs()
+    
     @classmethod
     def launch(cls, force=False):
         """

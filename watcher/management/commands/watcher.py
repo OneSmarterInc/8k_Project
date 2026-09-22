@@ -1,5 +1,21 @@
-from django.core.management.base import BaseCommand
+import traceback
 
+from django.core.management.base import BaseCommand
+from django.db import connection
+from django.utils import timezone
+
+from watcher.models import (
+    AutomationRun,
+    ScheduleConfig,
+    FilingSummaryCache,
+)
+from watcher.knowledge_base.models import (
+    FailureEvent,
+    Filing,
+)
+from watcher.services.failure_tracking_service import (
+    FailureTrackingService,
+)
 from watcher.services.ticker_file_reader import (
     TickerFileError,
     TickerFileReader,
@@ -7,8 +23,9 @@ from watcher.services.ticker_file_reader import (
 from watcher.services.ticker_processor import (
     TickerProcessor,
 )
-from watcher.models import AutomationRun, ScheduleConfig
-from django.utils import timezone
+from watcher.services.watcher_lock import (
+    WATCHER_LOCK_ID,
+)
 
 
 class Command(BaseCommand):
@@ -26,6 +43,7 @@ class Command(BaseCommand):
                 "filing, ingest, chunk, and embed it."
             ),
         )
+
         parser.add_argument(
             "--no-daily-chronicle",
             action="store_true",
@@ -33,57 +51,35 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from django.db import connection
-        
-        # Acquire PostgreSQL advisory lock to guarantee only ONE watcher runs at a time globally
-        with connection.cursor() as cursor:
-            # 82039147519301 is an arbitrary 64-bit integer for the 8K-Agentic-System Watcher lock
-            cursor.execute("SELECT pg_try_advisory_lock(82039147519301)")
-            acquired = cursor.fetchone()[0]
-            if not acquired:
-                self.stdout.write(self.style.ERROR("\n[ABORT] Another SEC watcher instance is currently running. Exiting safely to prevent overlaps.\n"))
-                return
+        """
+        Run one SEC watcher execution.
+
+        W-024 lifecycle guarantees:
+
+        1. PostgreSQL advisory lock prevents overlapping watcher runs.
+        2. Normal runs retain the existing AutomationRun finalization.
+        3. Unexpected BaseException events, such as KeyboardInterrupt,
+           mark a RUNNING AutomationRun as FAILED.
+        4. Aborted runs generate a FailureEvent audit record.
+        5. The advisory lock is explicitly released in the outer finally.
+        6. Hard process death remains recoverable through the stale-run
+           reconciliation implemented in watcher_lock.py.
+        """
+
+        run = None
+        lock_acquired = False
 
         auto_index = bool(
             options.get("auto_index")
         )
-        
+
         daily_chronicle = not bool(
             options.get("no_daily_chronicle")
         )
 
-        try:
-            tickers = (
-                TickerFileReader()
-                .read()
-            )
-
-        except TickerFileError as exc:
-            self.stderr.write(
-                self.style.ERROR(
-                    str(exc)
-                )
-            )
-            return
-
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Watcher started: "
-                f"{len(tickers)} ticker(s)"
-            )
-        )
-
-        self.stdout.write(
-            "Automatic indexing: "
-            + (
-                "ENABLED"
-                if auto_index
-                else "DISABLED"
-            )
-        )
-
-        run = AutomationRun.objects.create()
-        self.stdout.write(f"Created AutomationRun ID: {run.id}")
+        # --------------------------------------------------
+        # Existing run counters
+        # --------------------------------------------------
 
         total_discovered = 0
         total_downloaded = 0
@@ -98,271 +94,665 @@ class Command(BaseCommand):
 
         processed = 0
         invalid = 0
+
         unlinked_count = 0
         summary_count = 0
         email_count = 0
+
         final_status = AutomationRun.Status.FAILED
 
         try:
-            processor = TickerProcessor(
-                auto_index=auto_index,
-                automation_run=run,
-                daily_chronicle=daily_chronicle,
-            )
+            # --------------------------------------------------
+            # W-024:
+            # Acquire the PostgreSQL advisory lock.
+            # --------------------------------------------------
 
-            from watcher.models import ScheduleConfig
-
-            for index, ticker in enumerate(
-                tickers,
-                start=1,
-            ):
-                # Abort if the user toggles off the background automation
-                config = ScheduleConfig.objects.first()
-                if config and not config.is_active:
-                    self.stdout.write(self.style.WARNING("\nAutomation toggled OFF by user (ScheduleConfig inactive). Aborting active run...\n"))
-                    break
-
-                # We now print ticker processing info only if there were downloads
-                try:
-                    result = processor.process(
-                        ticker
-                    )
-
-                except ValueError as exc:
-                    invalid += 1
-
-                    self.stderr.write(
-                        self.style.WARNING(
-                            f"{ticker}: skipped - {exc}"
-                        )
-                    )
-
-                    continue
-
-                except Exception as exc:
-                    total_failed += 1
-
-                    self.stderr.write(
-                        self.style.ERROR(
-                            f"{ticker}: "
-                            f"processing failed - {exc}"
-                        )
-                    )
-
-                    continue
-
-                processed += 1
-
-                total_discovered += (
-                    result["discovered"]
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_try_advisory_lock(%s)",
+                    [WATCHER_LOCK_ID],
                 )
 
-                total_downloaded += (
-                    result["downloaded"]
+                lock_acquired = bool(
+                    cursor.fetchone()[0]
                 )
 
-                total_skipped += (
-                    result["skipped"]
-                )
-
-                total_failed += (
-                    result["failed"]
-                )
-
-                total_indexed += (
-                    result.get(
-                        "indexed",
-                        0,
-                    )
-                )
-
-                total_index_failed += (
-                    result.get(
-                        "index_failed",
-                        0,
-                    )
-                )
-
-                total_shards_expected += result.get("shards_expected", 0)
-                total_shards_parsed += result.get("shards_parsed", 0)
-
-                self.stdout.write("")
+            if not lock_acquired:
                 self.stdout.write(
-                    f"[{index}/{len(tickers)}] "
-                    f"Processing {ticker}..."
-                )
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f"{ticker}: "
-                        f"discovered="
-                        f"{result['discovered']} "
-                        f"downloaded="
-                        f"{result['downloaded']} "
-                        f"skipped="
-                        f"{result['skipped']} "
-                        f"failed="
-                        f"{result['failed']} "
-                        f"indexed="
-                        f"{result.get('indexed', 0)} "
-                        f"index_failed="
-                        f"{result.get('index_failed', 0)}"
+                    self.style.ERROR(
+                        "\n[ABORT] Another SEC watcher instance "
+                        "is currently running. Exiting safely "
+                        "to prevent overlaps.\n"
                     )
                 )
 
-                for (
-                    form,
-                    form_result,
-                ) in result["forms"].items():
-                    if form_result["downloaded"] > 0 or form_result["skipped"] > 0:
-                        self.stdout.write(
-                            f"  {form}: "
-                            f"discovered="
-                            f"{form_result['discovered']} "
-                            f"downloaded="
-                            f"{form_result['downloaded']} "
-                            f"skipped="
-                            f"{form_result['skipped']} "
-                            f"failed="
-                            f"{form_result['failed']} "
-                            f"indexed="
-                            f"{form_result.get('indexed', 0)} "
-                            f"index_failed="
-                            f"{form_result.get('index_failed', 0)}"
-                        )
+                return
 
-                    for error in (
-                        form_result["errors"]
-                    ):
-                        self.stderr.write(
-                            self.style.WARNING(
-                                f"    {error}"
-                            )
-                        )
+            # --------------------------------------------------
+            # Read configured tickers
+            # --------------------------------------------------
 
-            self.stdout.write("")
-            self.stdout.write(
-                "=" * 60
-            )
+            try:
+                tickers = (
+                    TickerFileReader()
+                    .read()
+                )
+
+            except TickerFileError as exc:
+                self.stderr.write(
+                    self.style.ERROR(
+                        str(exc)
+                    )
+                )
+
+                return
 
             self.stdout.write(
                 self.style.SUCCESS(
-                    "Watcher complete"
+                    f"Watcher started: "
+                    f"{len(tickers)} ticker(s)"
                 )
             )
 
             self.stdout.write(
-                f"Tickers in file: "
-                f"{len(tickers)}"
+                "Automatic indexing: "
+                + (
+                    "ENABLED"
+                    if auto_index
+                    else "DISABLED"
+                )
             )
+
+            # --------------------------------------------------
+            # Create durable AutomationRun
+            # --------------------------------------------------
+
+            run = AutomationRun.objects.create()
 
             self.stdout.write(
-                f"Successfully processed: "
-                f"{processed}"
+                f"Created AutomationRun ID: {run.id}"
             )
 
-            self.stdout.write(
-                f"Invalid/skipped tickers: "
-                f"{invalid}"
-            )
+            # --------------------------------------------------
+            # Existing watcher processing
+            # --------------------------------------------------
 
-            self.stdout.write(
-                f"Documents downloaded: "
-                f"{total_downloaded}"
-            )
+            try:
+                processor = TickerProcessor(
+                    auto_index=auto_index,
+                    automation_run=run,
+                    daily_chronicle=daily_chronicle,
+                )
 
-            self.stdout.write(
-                f"Duplicates skipped: "
-                f"{total_skipped}"
-            )
+                for index, ticker in enumerate(
+                    tickers,
+                    start=1,
+                ):
+                    # Existing behaviour:
+                    # Abort active run when scheduler is toggled off.
+                    config = (
+                        ScheduleConfig.objects.first()
+                    )
 
-            self.stdout.write(
-                f"Failures: "
-                f"{total_failed}"
-            )
+                    if (
+                        config
+                        and not config.is_active
+                    ):
+                        self.stdout.write(
+                            self.style.WARNING(
+                                "\nAutomation toggled OFF by user "
+                                "(ScheduleConfig inactive). "
+                                "Aborting active run...\n"
+                            )
+                        )
 
-            self.stdout.write(
-                f"Filings indexed: "
-                f"{total_indexed}"
-            )
+                        break
 
-            self.stdout.write(
-                f"Indexing failures: "
-                f"{total_index_failed}"
-            )
-            
-            self.stdout.write(
-                f"Shards expected: "
-                f"{total_shards_expected}"
-            )
-            
-            self.stdout.write(
-                f"Shards parsed: "
-                f"{total_shards_parsed}"
-            )
+                    try:
+                        result = processor.process(
+                            ticker
+                        )
 
-            from watcher.knowledge_base.models import Filing
-            # Reconciliation sweep for unlinked 8-K/A amendments
-            unlinked_amendments = Filing.objects.filter(form="8-K/A", amends__isnull=True)
-            for amendment in unlinked_amendments:
-                if amendment.report_date:
-                    original = Filing.objects.filter(
-                        company=amendment.company,
-                        form="8-K",
-                        report_date=amendment.report_date,
-                    ).order_by("-filing_date", "-accepted_at").first()
-                    if original:
-                        amendment.amends = original
-                        amendment.save(update_fields=["amends", "updated_at"])
+                    except ValueError as exc:
+                        invalid += 1
 
-            unlinked_count = Filing.objects.filter(form="8-K/A", amends__isnull=True).count()
-            
-            self.stdout.write(
-                f"Unlinked 8-K/A remaining: "
-                f"{unlinked_count}"
-            )
+                        self.stderr.write(
+                            self.style.WARNING(
+                                f"{ticker}: "
+                                f"skipped - {exc}"
+                            )
+                        )
 
-            from watcher.models import FilingSummaryCache
-            summary_count = FilingSummaryCache.objects.filter(filing__automation_run=run).count()
-            # Since email sending is triggered during post-processing and we don't have a direct email model,
-            # we'll use the summary count as a proxy for processed/emailed items or 0 if indexing is off.
-            email_count = summary_count if auto_index else 0
+                        continue
 
-            # Determine overall run status based on failures
-            if total_failed == 0 and total_index_failed == 0 and total_shards_expected == total_shards_parsed:
-                final_status = AutomationRun.Status.COMPLETED
-            else:
-                if total_indexed > 0 or total_downloaded > 0 or total_shards_parsed > 0:
-                    final_status = AutomationRun.Status.PARTIAL
+                    except Exception as exc:
+                        total_failed += 1
+
+                        self.stderr.write(
+                            self.style.ERROR(
+                                f"{ticker}: "
+                                f"processing failed - {exc}"
+                            )
+                        )
+
+                        continue
+
+                    processed += 1
+
+                    total_discovered += (
+                        result["discovered"]
+                    )
+
+                    total_downloaded += (
+                        result["downloaded"]
+                    )
+
+                    total_skipped += (
+                        result["skipped"]
+                    )
+
+                    total_failed += (
+                        result["failed"]
+                    )
+
+                    total_indexed += (
+                        result.get(
+                            "indexed",
+                            0,
+                        )
+                    )
+
+                    total_index_failed += (
+                        result.get(
+                            "index_failed",
+                            0,
+                        )
+                    )
+
+                    total_shards_expected += (
+                        result.get(
+                            "shards_expected",
+                            0,
+                        )
+                    )
+
+                    total_shards_parsed += (
+                        result.get(
+                            "shards_parsed",
+                            0,
+                        )
+                    )
+
+                    self.stdout.write("")
+
+                    self.stdout.write(
+                        f"[{index}/{len(tickers)}] "
+                        f"Processing {ticker}..."
+                    )
+
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f"{ticker}: "
+                            f"discovered="
+                            f"{result['discovered']} "
+                            f"downloaded="
+                            f"{result['downloaded']} "
+                            f"skipped="
+                            f"{result['skipped']} "
+                            f"failed="
+                            f"{result['failed']} "
+                            f"indexed="
+                            f"{result.get('indexed', 0)} "
+                            f"index_failed="
+                            f"{result.get('index_failed', 0)}"
+                        )
+                    )
+
+                    for (
+                        form,
+                        form_result,
+                    ) in result["forms"].items():
+
+                        if (
+                            form_result["downloaded"] > 0
+                            or form_result["skipped"] > 0
+                        ):
+                            self.stdout.write(
+                                f"  {form}: "
+                                f"discovered="
+                                f"{form_result['discovered']} "
+                                f"downloaded="
+                                f"{form_result['downloaded']} "
+                                f"skipped="
+                                f"{form_result['skipped']} "
+                                f"failed="
+                                f"{form_result['failed']} "
+                                f"indexed="
+                                f"{form_result.get('indexed', 0)} "
+                                f"index_failed="
+                                f"{form_result.get('index_failed', 0)}"
+                            )
+
+                        for error in (
+                            form_result["errors"]
+                        ):
+                            self.stderr.write(
+                                self.style.WARNING(
+                                    f"    {error}"
+                                )
+                            )
+
+                # --------------------------------------------------
+                # Existing watcher completion output
+                # --------------------------------------------------
+
+                self.stdout.write("")
+
+                self.stdout.write(
+                    "=" * 60
+                )
+
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "Watcher complete"
+                    )
+                )
+
+                self.stdout.write(
+                    f"Tickers in file: "
+                    f"{len(tickers)}"
+                )
+
+                self.stdout.write(
+                    f"Successfully processed: "
+                    f"{processed}"
+                )
+
+                self.stdout.write(
+                    f"Invalid/skipped tickers: "
+                    f"{invalid}"
+                )
+
+                self.stdout.write(
+                    f"Documents downloaded: "
+                    f"{total_downloaded}"
+                )
+
+                self.stdout.write(
+                    f"Duplicates skipped: "
+                    f"{total_skipped}"
+                )
+
+                self.stdout.write(
+                    f"Failures: "
+                    f"{total_failed}"
+                )
+
+                self.stdout.write(
+                    f"Filings indexed: "
+                    f"{total_indexed}"
+                )
+
+                self.stdout.write(
+                    f"Indexing failures: "
+                    f"{total_index_failed}"
+                )
+
+                self.stdout.write(
+                    f"Shards expected: "
+                    f"{total_shards_expected}"
+                )
+
+                self.stdout.write(
+                    f"Shards parsed: "
+                    f"{total_shards_parsed}"
+                )
+
+                # --------------------------------------------------
+                # Existing 8-K/A reconciliation
+                #
+                # Do not refactor this as part of W-024.
+                # W-027 handles amendment-linking duplication later.
+                # --------------------------------------------------
+
+                unlinked_amendments = (
+                    Filing.objects.filter(
+                        form="8-K/A",
+                        amends__isnull=True,
+                    )
+                )
+
+                for amendment in (
+                    unlinked_amendments
+                ):
+                    if amendment.report_date:
+                        original = (
+                            Filing.objects.filter(
+                                company=(
+                                    amendment.company
+                                ),
+                                form="8-K",
+                                report_date=(
+                                    amendment.report_date
+                                ),
+                            )
+                            .order_by(
+                                "-filing_date",
+                                "-accepted_at",
+                            )
+                            .first()
+                        )
+
+                        if original:
+                            amendment.amends = (
+                                original
+                            )
+
+                            amendment.save(
+                                update_fields=[
+                                    "amends",
+                                    "updated_at",
+                                ]
+                            )
+
+                unlinked_count = (
+                    Filing.objects.filter(
+                        form="8-K/A",
+                        amends__isnull=True,
+                    )
+                    .count()
+                )
+
+                self.stdout.write(
+                    f"Unlinked 8-K/A remaining: "
+                    f"{unlinked_count}"
+                )
+
+                # --------------------------------------------------
+                # Existing summary / email counts
+                # --------------------------------------------------
+
+                summary_count = (
+                    FilingSummaryCache.objects.filter(
+                        filing__automation_run=run
+                    )
+                    .count()
+                )
+
+                # Preserve existing behaviour.
+                email_count = (
+                    summary_count
+                    if auto_index
+                    else 0
+                )
+
+                # --------------------------------------------------
+                # Existing final status calculation
+                # --------------------------------------------------
+
+                if (
+                    total_failed == 0
+                    and total_index_failed == 0
+                    and (
+                        total_shards_expected
+                        == total_shards_parsed
+                    )
+                ):
+                    final_status = (
+                        AutomationRun
+                        .Status
+                        .COMPLETED
+                    )
+
                 else:
-                    final_status = AutomationRun.Status.FAILED
+                    if (
+                        total_indexed > 0
+                        or total_downloaded > 0
+                        or total_shards_parsed > 0
+                    ):
+                        final_status = (
+                            AutomationRun
+                            .Status
+                            .PARTIAL
+                        )
 
-        except Exception as exc:
-            import traceback
-            self.stderr.write(self.style.ERROR(f"Watcher crashed unexpectedly: {exc}"))
-            traceback.print_exc()
-            final_status = AutomationRun.Status.FAILED
+                    else:
+                        final_status = (
+                            AutomationRun
+                            .Status
+                            .FAILED
+                        )
+
+            except Exception as exc:
+                # Preserve the existing behaviour for ordinary
+                # watcher exceptions:
+                # log them and finalize the run as FAILED.
+                self.stderr.write(
+                    self.style.ERROR(
+                        "Watcher crashed unexpectedly: "
+                        f"{exc}"
+                    )
+                )
+
+                traceback.print_exc()
+
+                final_status = (
+                    AutomationRun.Status.FAILED
+                )
+
+            finally:
+                # --------------------------------------------------
+                # Existing normal AutomationRun finalization
+                # --------------------------------------------------
+
+                try:
+                    unlinked_count = (
+                        Filing.objects.filter(
+                            form="8-K/A",
+                            amends__isnull=True,
+                        )
+                        .count()
+                    )
+
+                    summary_count = (
+                        FilingSummaryCache.objects.filter(
+                            filing__automation_run=run
+                        )
+                        .count()
+                    )
+
+                    email_count = (
+                        summary_count
+                        if auto_index
+                        else 0
+                    )
+
+                except Exception as exc:
+                    # Preserve safe fallback values already initialized
+                    # above if final statistics cannot be calculated.
+                    self.stderr.write(
+                        self.style.ERROR(
+                            "Error computing final stats: "
+                            f"{exc}"
+                        )
+                    )
+
+                run.status = final_status
+                run.completed_at = timezone.now()
+
+                run.files_detected = (
+                    total_discovered
+                )
+
+                run.files_processed = (
+                    total_indexed
+                )
+
+                run.shards_expected = (
+                    total_shards_expected
+                )
+
+                run.shards_parsed = (
+                    total_shards_parsed
+                )
+
+                run.summary_generated_count = (
+                    summary_count
+                )
+
+                run.email_sent_count = (
+                    email_count
+                )
+
+                run.unlinked_amendments_count = (
+                    unlinked_count
+                )
+
+                run.save()
+
+                self.stdout.write(
+                    f"AutomationRun {run.id} "
+                    f"marked as {final_status}."
+                )
+
+        except BaseException as exc:
+            # --------------------------------------------------
+            # W-024 Part A
+            #
+            # Exception does not include KeyboardInterrupt or
+            # SystemExit. BaseException does.
+            #
+            # This outer handler guarantees that an abnormal
+            # interpreter-level interruption does not intentionally
+            # leave an AutomationRun marked RUNNING.
+            # --------------------------------------------------
+
+            if run is not None:
+                aborted_at = timezone.now()
+
+                try:
+                    (
+                        AutomationRun.objects
+                        .filter(
+                            pk=run.pk,
+                            status=(
+                                AutomationRun
+                                .Status
+                                .RUNNING
+                            ),
+                        )
+                        .update(
+                            status=(
+                                AutomationRun
+                                .Status
+                                .FAILED
+                            ),
+                            completed_at=aborted_at,
+                        )
+                    )
+
+                    # Keep in-memory object consistent as well.
+                    run.status = (
+                        AutomationRun.Status.FAILED
+                    )
+
+                    run.completed_at = (
+                        aborted_at
+                    )
+
+                except Exception as finalize_exc:
+                    self.stderr.write(
+                        self.style.ERROR(
+                            "Unable to finalize aborted "
+                            "AutomationRun "
+                            f"{run.pk}: "
+                            f"{finalize_exc}"
+                        )
+                    )
+
+                # ----------------------------------------------
+                # W-024 failure audit
+                #
+                # There is currently no RUN stage or RUN_ABORTED
+                # code in FailureEvent. Using the existing generic
+                # values avoids an unrelated model/migration change.
+                # ----------------------------------------------
+
+                try:
+                    FailureTrackingService.record(
+                        stage=(
+                            FailureEvent
+                            .Stage
+                            .DISCOVERY
+                        ),
+                        code=(
+                            FailureEvent
+                            .Code
+                            .UNKNOWN
+                        ),
+                        message=(
+                            f"AutomationRun {run.pk} "
+                            "aborted unexpectedly: "
+                            f"{type(exc).__name__}: "
+                            f"{exc}"
+                        ),
+                    )
+
+                except Exception as tracking_exc:
+                    self.stderr.write(
+                        self.style.ERROR(
+                            "Unable to record aborted "
+                            "AutomationRun failure: "
+                            f"{tracking_exc}"
+                        )
+                    )
+
+            # Preserve KeyboardInterrupt/SystemExit/etc.
+            # Do not silently swallow abnormal termination.
+            raise
 
         finally:
-            try:
-                from watcher.knowledge_base.models import Filing
-                unlinked_count = Filing.objects.filter(form="8-K/A", amends__isnull=True).count()
-                
-                from watcher.models import FilingSummaryCache
-                summary_count = FilingSummaryCache.objects.filter(filing__automation_run=run).count()
-                email_count = summary_count if auto_index else 0
-            except Exception as e:
-                # Fallback if the database connection completely died
-                self.stderr.write(self.style.ERROR(f"Error computing final stats: {e}"))
+            # --------------------------------------------------
+            # W-024 Part A
+            #
+            # Explicitly release the session-level PostgreSQL
+            # advisory lock whenever this Python process is still
+            # alive and able to execute cleanup.
+            #
+            # For SIGKILL/power loss/process destruction PostgreSQL
+            # automatically releases the session lock; W-024 Part B
+            # then reconciles any stale RUNNING database row.
+            # --------------------------------------------------
 
-            run.status = final_status
-            run.completed_at = timezone.now()
-            run.files_detected = total_discovered
-            run.files_processed = total_indexed
-            run.shards_expected = total_shards_expected
-            run.shards_parsed = total_shards_parsed
-            run.summary_generated_count = summary_count
-            run.email_sent_count = email_count
-            run.unlinked_amendments_count = unlinked_count
-            run.save()
+            if lock_acquired:
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT pg_advisory_unlock(%s)",
+                            [WATCHER_LOCK_ID],
+                        )
 
-            self.stdout.write(f"AutomationRun {run.id} marked as {final_status}.")
+                        released = bool(
+                            cursor.fetchone()[0]
+                        )
+
+                    if not released:
+                        self.stderr.write(
+                            self.style.WARNING(
+                                "Watcher advisory lock was "
+                                "already released or was no "
+                                "longer owned by this database "
+                                "session."
+                            )
+                        )
+
+                except Exception as unlock_exc:
+                    # Do not replace the original watcher exception
+                    # with an advisory-lock cleanup exception.
+                    self.stderr.write(
+                        self.style.ERROR(
+                            "Unable to explicitly release "
+                            "watcher advisory lock: "
+                            f"{unlock_exc}"
+                        )
+                    )
