@@ -8,3 +8,8 @@ downloads/
 *.log
 # SMTP test files
 test_smtp.py
+
+watcher/tests/test_amends.py
+watcher/tests/test_entry_rule_persistence.py
+watcher/tests/test_market_session.py
+watcher/tests/test_scheduler.py
