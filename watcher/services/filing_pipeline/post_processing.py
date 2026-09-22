@@ -71,40 +71,46 @@ class FilingPostProcessingService:
         # -------------------------
         # INDEXING
         # -------------------------
-        try:
-            self.indexing_service.index_filing(
-                registered_filing
-            )
-
-            result["indexed"] = 1
-
+        if registered_filing.ingestion_status == "indexed":
             self.output.status(
                 "INDEXING",
-                "SUCCESS",
+                "SKIPPED (Already indexed)",
             )
+        else:
+            try:
+                self.indexing_service.index_filing(
+                    registered_filing
+                )
 
-        except Exception as exc:
+                result["indexed"] = 1
 
-            result["index_failed"] = 1
+                self.output.status(
+                    "INDEXING",
+                    "SUCCESS",
+                )
 
-            result["errors"].append(
-                "Knowledge-base indexing failed for "
-                f"{accession_number}: {exc}"
-            )
+            except Exception as exc:
 
-            self.output.status(
-                "INDEXING",
-                f"FAILED ({exc})",
-            )
+                result["index_failed"] = 1
 
-            FailureTrackingService.record(
-                filing=registered_filing,
-                stage=FailureEvent.Stage.INDEXING,
-                code=FailureEvent.Code.INDEX_FAILED,
-                message=str(exc),
-            )
+                result["errors"].append(
+                    "Knowledge-base indexing failed for "
+                    f"{accession_number}: {exc}"
+                )
 
-            return result
+                self.output.status(
+                    "INDEXING",
+                    f"FAILED ({exc})",
+                )
+
+                FailureTrackingService.record(
+                    filing=registered_filing,
+                    stage=FailureEvent.Stage.INDEXING,
+                    code=FailureEvent.Code.INDEX_FAILED,
+                    message=str(exc),
+                )
+
+                return result
 
 
         # -------------------------
@@ -218,7 +224,16 @@ class FilingPostProcessingService:
                 stage=FailureEvent.Stage.SUMMARY,
             )
 
-            if self.daily_chronicle:
+            if registered_filing.email_sent_at:
+                
+                email_sent = False
+                
+                self.output.status(
+                    "EMAIL",
+                    "SKIPPED (Already sent)",
+                )
+
+            elif self.daily_chronicle:
 
                 email_sent = (
                     self.email_service.send(
