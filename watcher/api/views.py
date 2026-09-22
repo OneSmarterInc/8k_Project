@@ -85,6 +85,29 @@ from django.conf import settings
 from rest_framework.views import APIView
 
 class SMTPConfigView(APIView):
+    def get(self, request):
+        env_path = os.path.join(settings.BASE_DIR, ".env")
+        config = {
+            "senderName": "", "smtpHost": "", "smtpPort": "587",
+            "securityProtocol": "TLS", "smtpUsername": "",
+            "senderEmail": "", "replyToEmail": ""
+        }
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8-sig") as f:
+                for line in f:
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.strip().split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k == "SMTP_SENDER_NAME": config["senderName"] = v
+                        elif k == "SMTP_HOST": config["smtpHost"] = v
+                        elif k == "SMTP_PORT": config["smtpPort"] = v
+                        elif k == "SMTP_SECURITY": config["securityProtocol"] = v
+                        elif k == "SMTP_USERNAME": config["smtpUsername"] = v
+                        elif k == "SMTP_SENDER_EMAIL": config["senderEmail"] = v
+                        elif k == "SMTP_REPLY_TO_EMAIL": config["replyToEmail"] = v
+        return Response(config)
+
     def post(self, request):
         action = request.GET.get("action")
         data = request.data
@@ -145,7 +168,8 @@ class SMTPConfigView(APIView):
                     k, _ = line.split("=", 1)
                     k = k.strip()
                     if k in updates:
-                        new_lines.append(f"{k}={updates[k]}\n")
+                        val = updates[k] if updates[k] is not None else ""
+                        new_lines.append(f"{k}={val}\n")
                         updated_keys.add(k)
                         continue
                 new_lines.append(line)

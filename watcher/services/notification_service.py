@@ -611,48 +611,47 @@ class FilingNotificationService:
             manual_audit_status=manual_audit_status,
         )
 
-        try:
-            email = EmailMultiAlternatives(
-                subject=subject,
-                body=body,
-                from_email=sender,
-                to=[
-                    self.recipient,
-                ],
-                reply_to=(
-                    [
-                        reply_to_email,
-                    ]
-                    if reply_to_email
-                    else None
-                ),
-            )
-            
-            email.attach_alternative(html_body, "text/html")
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=sender,
+            to=[
+                self.recipient,
+            ],
+            reply_to=(
+                [
+                    reply_to_email,
+                ]
+                if reply_to_email
+                else None
+            ),
+        )
+        
+        email.attach_alternative(html_body, "text/html")
 
-            result = email.send(
-                fail_silently=False,
-            )
+        result = email.send(
+            fail_silently=False,
+        )
 
-            if result == 1:
-                logger.info(
-                    "SEC filing email sent: "
-                    "ticker=%s form=%s accession=%s "
-                    "recipient=%s",
-                    ticker,
-                    form_type,
-                    accession_number,
-                    self.recipient,
-                )
-
-                return True
-
-            logger.warning(
-                "SEC email returned unexpected "
-                "result=%s ticker=%s accession=%s",
-                result,
+        if result == 1:
+            logger.info(
+                "SEC filing email sent: "
+                "ticker=%s form=%s accession=%s "
+                "recipient=%s",
                 ticker,
+                form_type,
                 accession_number,
+                self.recipient,
             )
 
-            return False
+            return True
+
+        logger.warning(
+            "SEC email returned unexpected "
+            "result=%s ticker=%s accession=%s",
+            result,
+            ticker,
+            accession_number,
+        )
+
+        return False

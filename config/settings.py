@@ -318,9 +318,14 @@ SMTP_SECURITY = os.getenv(
 
 
 EMAIL_USE_TLS = SMTP_SECURITY in {
-    "TLS",
     "STARTTLS",
+    "TLS",
 }
+
+EMAIL_USE_SSL = SMTP_SECURITY == "SSL"
+
+# Set a timeout so we don't hang indefinitely if SMTP host is unreachable
+EMAIL_TIMEOUT = 10
 
 EMAIL_USE_SSL = SMTP_SECURITY == "SSL"
 
