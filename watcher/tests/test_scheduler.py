@@ -145,10 +145,9 @@ class SchedulerTestCase(TestCase):
 
         if os.name == "nt":
             expected_flags = (
-                subprocess.DETACHED_PROCESS
+                subprocess.CREATE_NO_WINDOW
                 | subprocess.CREATE_NEW_PROCESS_GROUP
             )
-
             self.assertEqual(
                 kwargs["creationflags"],
                 expected_flags,
