@@ -129,21 +129,32 @@ class WatcherLauncherTestCase(TestCase):
 
         if os.name == "nt":
 
+            # W-023: CREATE_NO_WINDOW (hidden console, inherited by the
+            # venv's real python.exe) + CREATE_NEW_PROCESS_GROUP
+            # (independent of Django's Ctrl+C).
             expected_flags = (
-                subprocess.DETACHED_PROCESS
+                subprocess.CREATE_NO_WINDOW
                 | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_NO_WINDOW
             )
 
             self.assertEqual(
                 kwargs["creationflags"],
                 expected_flags,
             )
+
+            # DETACHED_PROCESS must never come back: combined with the
+            # venv launcher it opens a visible cmd window, and closing
+            # that window kills the watcher.
+            self.assertEqual(
+                kwargs["creationflags"]
+                & subprocess.DETACHED_PROCESS,
+                0,
+            )
+
             self.assertNotIn(
                 "start_new_session",
                 kwargs,
             )
-
         else:
 
             self.assertTrue(
