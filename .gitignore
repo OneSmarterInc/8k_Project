@@ -1,15 +1,25 @@
+# Python
 venv/
-.env
+Venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Secrets / local config
+.env
+
+# Local databases
+db.sqlite3
+*.sqlite3
+
+# Office lock files
+~$*
+
+# Runtime output
 downloads/
 *.log
+watcher_latest.log
+
 # SMTP test files
 test_smtp.py
-
-watcher/tests/test_amends.py
-watcher/tests/test_entry_rule_persistence.py
-watcher/tests/test_market_session.py
-watcher/tests/test_scheduler.py
