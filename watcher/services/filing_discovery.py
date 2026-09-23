@@ -412,8 +412,9 @@ class FilingDiscovery:
                         filing_date.isoformat()
                     ),
 
+                                        # W-037: None (not "") when SEC gives no report date.
                     "report_date": (
-                        report_date.isoformat() if report_date else ""
+                        report_date.isoformat() if report_date else None
                     ),
 
                     "acceptance_datetime": (

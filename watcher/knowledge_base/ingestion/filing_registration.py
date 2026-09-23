@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
 
@@ -9,9 +10,33 @@ from watcher.knowledge_base.models import (
     Filing,
     IngestionJob,
 )
+from watcher.services.item_codes import (
+    format_item_codes,
+)
 from watcher.services.market_session import (
     VALID_ENTRY_RULES,
 )
+def _normalize_report_date(value):
+    """
+    W-037: coerce SEC's report date to a date or None.
+
+    SEC sends "" when there is no report date. "" in a DateField raises
+    ValidationError, which made the whole registration fail: the file
+    was downloaded but never recorded.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
 
 class FilingRegistrationService:
     """
@@ -68,6 +93,20 @@ class FilingRegistrationService:
 
         sequence = int(
             sequence
+        )
+
+                # W-037: "" or malformed -> None.
+        report_date = _normalize_report_date(
+            report_date
+        )
+
+                # W-036: always store "1.01;9.01", never str(tuple).
+        sec_item_codes = format_item_codes(
+            sec_item_codes
+        )
+
+        parsed_item_codes = format_item_codes(
+            parsed_item_codes
         )
 
         # --------------------------------
