@@ -6,45 +6,64 @@ from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 
-from watcher.models import AutomationRun
-from watcher.services.watcher_launcher import SubprocessWatcherLauncher
+from watcher.services.watcher_launcher import (
+    SubprocessWatcherLauncher,
+)
 
 
 class WatcherLauncherTestCase(TestCase):
 
-    @patch("watcher.services.watcher_launcher.subprocess.Popen")
-    def test_launcher_success(self, mock_popen):
+    @patch(
+        "watcher.services.watcher_launcher.reconcile_stale_running_runs"
+    )
+    @patch(
+        "watcher.services.watcher_launcher.subprocess.Popen"
+    )
+    def test_launcher_success(
+        self,
+        mock_popen,
+        mock_is_running,
+    ):
         """
-        Existing launcher behaviour must remain unchanged.
+        Existing launcher behaviour.
 
-        - Launch when no watcher is running.
-        - Refuse duplicate launch when an AutomationRun is RUNNING.
+        - Launch when watcher is not running.
+        - Refuse duplicate launch when watcher is already running.
         """
 
         mock_process = MagicMock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
 
+        # First launch: no watcher running
+        mock_is_running.return_value = False
+
         launched = SubprocessWatcherLauncher.launch()
 
         self.assertTrue(launched)
         mock_popen.assert_called_once()
 
-        AutomationRun.objects.create(
-            status=AutomationRun.Status.RUNNING
-        )
 
+        # Second launch: watcher already running
         mock_popen.reset_mock()
+        mock_is_running.return_value = True
 
         launched = SubprocessWatcherLauncher.launch()
 
         self.assertFalse(launched)
         mock_popen.assert_not_called()
 
-    @patch("watcher.services.watcher_launcher.subprocess.Popen")
+
+    @patch(
+        "watcher.services.watcher_launcher.reconcile_stale_running_runs"
+    )
+    @patch(
+        "watcher.services.watcher_launcher.subprocess.Popen"
+    )
     def test_launcher_is_detached_and_does_not_use_stdout_pipe(
         self,
         mock_popen,
+        mock_is_running,
     ):
         """
         W-023 regression test.
@@ -52,9 +71,12 @@ class WatcherLauncherTestCase(TestCase):
         The watcher must not depend on a PIPE reader owned by Django.
         """
 
+        mock_is_running.return_value = False
+
         mock_process = MagicMock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
+
 
         launched = SubprocessWatcherLauncher.launch()
 
@@ -64,7 +86,7 @@ class WatcherLauncherTestCase(TestCase):
 
         args, kwargs = mock_popen.call_args
 
-        # Existing watcher command must remain unchanged.
+
         self.assertEqual(
             args[0],
             [
@@ -76,32 +98,37 @@ class WatcherLauncherTestCase(TestCase):
             ],
         )
 
-        # W-023: stdout must go directly to the log file,
-        # never through subprocess.PIPE.
-        self.assertIn("stdout", kwargs)
+
+        self.assertIn(
+            "stdout",
+            kwargs,
+        )
+
         self.assertIsNot(
             kwargs["stdout"],
             subprocess.PIPE,
         )
 
-        # stderr continues into the same watcher log.
+
         self.assertEqual(
             kwargs["stderr"],
             subprocess.STDOUT,
         )
 
-        # Detached process must not wait for stdin.
+
         self.assertEqual(
             kwargs["stdin"],
             subprocess.DEVNULL,
         )
 
+
         self.assertTrue(
             kwargs["close_fds"]
         )
 
-        # Verify platform-specific detachment.
+
         if os.name == "nt":
+
             expected_flags = (
                 subprocess.DETACHED_PROCESS
                 | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -118,6 +145,7 @@ class WatcherLauncherTestCase(TestCase):
             )
 
         else:
+
             self.assertTrue(
                 kwargs["start_new_session"]
             )
