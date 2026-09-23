@@ -3,10 +3,62 @@ from dataclasses import dataclass
 from watcher.knowledge_base.models import Filing
 
 
+AMBIGUOUS_AMENDMENT_TARGET = (
+    "AMBIGUOUS_AMENDMENT_TARGET"
+)
+
+
 @dataclass
 class LinkResult:
     linked: bool
     reason: str = ""
+
+
+def candidate_originals(amendment: Filing):
+    """
+    Return every valid original candidate using the exact same
+    matching rule used by amendment linking.
+
+    A valid original must:
+    - belong to the same company,
+    - be an 8-K,
+    - have the same report_date.
+    """
+
+    if (
+        amendment.form != "8-K/A"
+        or not amendment.report_date
+    ):
+        return Filing.objects.none()
+
+    return (
+        Filing.objects.filter(
+            company=amendment.company,
+            form="8-K",
+            report_date=amendment.report_date,
+        )
+        .order_by(
+            "-filing_date",
+            "-accepted_at",
+            "-id",
+        )
+    )
+
+
+def unresolved_ambiguous_amendments():
+    """
+    Return unresolved ambiguous 8-K/A filings.
+
+    These are amendments for which automatic linking could not safely
+    choose one original filing.
+    """
+
+    return Filing.objects.filter(
+        form="8-K/A",
+        amends__isnull=True,
+        flag=True,
+        flag_reason=AMBIGUOUS_AMENDMENT_TARGET,
+    )
 
 
 def link_amendment(amendment: Filing) -> LinkResult:
@@ -38,19 +90,14 @@ def link_amendment(amendment: Filing) -> LinkResult:
         )
 
     # Fetch at most two candidates.
+    #
     # We only need to know:
     #   0 = no original
     #   1 = safe match
     #   2 = ambiguous
     candidates = list(
-        Filing.objects.filter(
-            company=amendment.company,
-            form="8-K",
-            report_date=amendment.report_date,
-        )
-        .order_by(
-            "-filing_date",
-            "-accepted_at",
+        candidate_originals(
+            amendment
         )[:2]
     )
 
@@ -66,7 +113,7 @@ def link_amendment(amendment: Filing) -> LinkResult:
     if len(candidates) > 1:
         amendment.flag = True
         amendment.flag_reason = (
-            "AMBIGUOUS_AMENDMENT_TARGET"
+            AMBIGUOUS_AMENDMENT_TARGET
         )
 
         amendment.save(
@@ -79,7 +126,7 @@ def link_amendment(amendment: Filing) -> LinkResult:
 
         return LinkResult(
             linked=False,
-            reason="AMBIGUOUS_AMENDMENT_TARGET",
+            reason=AMBIGUOUS_AMENDMENT_TARGET,
         )
 
     # Exactly one candidate = safe to link.

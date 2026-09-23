@@ -1,11 +1,16 @@
 from rest_framework import serializers
 
 from watcher.models import (
+    AutomationRun,
     Company,
     Filing,
     FilingSummaryCache,
-    AutomationRun,
 )
+from watcher.knowledge_base.ingestion.amendment_linker import (
+    AMBIGUOUS_AMENDMENT_TARGET,
+    candidate_originals as amendment_candidate_originals,
+)
+
 
 class AutomationRunSerializer(serializers.ModelSerializer):
     class Meta:
@@ -25,19 +30,18 @@ class CompanySerializer(serializers.ModelSerializer):
         ]
 
 
-
 class FilingSerializer(serializers.ModelSerializer):
 
     ticker = serializers.CharField(
         source="company.ticker",
-        read_only=True
+        read_only=True,
     )
 
     company_name = serializers.CharField(
         source="company.name",
-        read_only=True
+        read_only=True,
     )
-    
+
     amends_accession = serializers.CharField(
         source="amends.accession_number",
         read_only=True,
@@ -47,13 +51,21 @@ class FilingSerializer(serializers.ModelSerializer):
 
     amended_by_accession = serializers.SerializerMethodField()
 
-    def get_amended_by_accession(self, obj):
-        return list(obj.amended_by.values_list("accession_number", flat=True))
-
     summary = serializers.SerializerMethodField()
 
-    class Meta:
+    classification = serializers.SerializerMethodField()
 
+    failure_stage = serializers.SerializerMethodField()
+    failure_code = serializers.SerializerMethodField()
+    failure_message = serializers.SerializerMethodField()
+    failure_created_at = serializers.SerializerMethodField()
+
+    # W-022:
+    # Candidate original 8-K filings presented to a reviewer when an
+    # amendment cannot be linked automatically without guessing.
+    candidate_originals = serializers.SerializerMethodField()
+
+    class Meta:
         model = Filing
 
         fields = [
@@ -63,6 +75,7 @@ class FilingSerializer(serializers.ModelSerializer):
             "form",
             "accession_number",
             "filing_date",
+            "report_date",
             "accepted_at",
             "primary_document",
             "source_url",
@@ -74,52 +87,139 @@ class FilingSerializer(serializers.ModelSerializer):
             "amended_by_accession",
             "sec_item_codes",
             "item_codes_match",
+            "flag",
+            "flag_reason",
+            "candidate_originals",
             "failure_stage",
             "failure_code",
             "failure_message",
             "failure_created_at",
         ]
 
+    def get_amended_by_accession(self, obj):
+        return list(
+            obj.amended_by.values_list(
+                "accession_number",
+                flat=True,
+            )
+        )
 
-    def get_summary(self,obj):
-
+    def get_summary(self, obj):
         try:
             return obj.summary_cache.summary
+
         except FilingSummaryCache.DoesNotExist:
             return None
 
-    # classification is handled conditionally depending on backend capability
-    classification = serializers.SerializerMethodField()
-
     def get_classification(self, obj):
-        # We don't have a rigid model for classification but we could parse summary or rely on
-        # ItemVerificationService. For now, since the user asks not to hardcode it, 
-        # return None and frontend will hide it if absent.
+        # Classification remains intentionally non-hardcoded.
         return None
 
-    failure_stage = serializers.SerializerMethodField()
-    failure_code = serializers.SerializerMethodField()
-    failure_message = serializers.SerializerMethodField()
-    failure_created_at = serializers.SerializerMethodField()
-
     def _get_active_failure(self, obj):
-        if not hasattr(obj, "_active_failure"):
-            # cache it on the object so we only query once per filing
-            obj._active_failure = obj.failure_events.filter(resolved_at__isnull=True).order_by("-created_at").first()
+        if not hasattr(
+            obj,
+            "_active_failure",
+        ):
+            obj._active_failure = (
+                obj.failure_events
+                .filter(
+                    resolved_at__isnull=True
+                )
+                .order_by(
+                    "-created_at"
+                )
+                .first()
+            )
+
         return obj._active_failure
 
     def get_failure_stage(self, obj):
-        failure = self._get_active_failure(obj)
-        return failure.stage if failure else None
+        failure = self._get_active_failure(
+            obj
+        )
+
+        return (
+            failure.stage
+            if failure
+            else None
+        )
 
     def get_failure_code(self, obj):
-        failure = self._get_active_failure(obj)
-        return failure.code if failure else None
+        failure = self._get_active_failure(
+            obj
+        )
+
+        return (
+            failure.code
+            if failure
+            else None
+        )
 
     def get_failure_message(self, obj):
-        failure = self._get_active_failure(obj)
-        return failure.message if failure else None
+        failure = self._get_active_failure(
+            obj
+        )
+
+        return (
+            failure.message
+            if failure
+            else None
+        )
 
     def get_failure_created_at(self, obj):
-        failure = self._get_active_failure(obj)
-        return failure.created_at if failure else None
+        failure = self._get_active_failure(
+            obj
+        )
+
+        return (
+            failure.created_at
+            if failure
+            else None
+        )
+
+    def get_candidate_originals(self, obj):
+        """
+        W-022:
+        Only expose candidate originals when this filing is an unresolved,
+        explicitly flagged ambiguous 8-K/A amendment.
+
+        The candidate query is shared with amendment_linker.py so the API
+        cannot drift away from the automatic matching policy.
+        """
+
+        if (
+            obj.form != "8-K/A"
+            or obj.amends_id is not None
+            or not obj.flag
+            or obj.flag_reason
+            != AMBIGUOUS_AMENDMENT_TARGET
+        ):
+            return []
+
+        candidates = (
+            amendment_candidate_originals(
+                obj
+            )
+        )
+
+        return [
+            {
+                "id": candidate.id,
+                "accession_number": (
+                    candidate.accession_number
+                ),
+                "filing_date": (
+                    candidate.filing_date
+                ),
+                "report_date": (
+                    candidate.report_date
+                ),
+                "accepted_at": (
+                    candidate.accepted_at
+                ),
+                "source_url": (
+                    candidate.source_url
+                ),
+            }
+            for candidate in candidates
+        ]

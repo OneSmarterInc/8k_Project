@@ -731,6 +731,13 @@ class AutomationRun(models.Model):
     email_sent_count = models.PositiveIntegerField(default=0)
     unlinked_amendments_count = models.PositiveIntegerField(default=0)
 
+    # W-022:
+    # Number of unresolved 8-K/A amendments where multiple
+    # possible original 8-K filings exist.
+    ambiguous_amendments_count = models.PositiveIntegerField(
+        default=0
+    )
+
     class Meta:
         ordering = ["-started_at"]
 

@@ -1,14 +1,30 @@
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from rest_framework.views import APIView
+import os
+import smtplib
+
+from email.message import EmailMessage
 
 from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
+
+from rest_framework.decorators import (
+    api_view,
+    permission_classes,
+)
+from rest_framework.permissions import IsAdminUser
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from watcher.models import (
     Filing,
     AutomationRun,
     ScheduleConfig,
+)
+from watcher.knowledge_base.ingestion.amendment_linker import (
+    AMBIGUOUS_AMENDMENT_TARGET,
+    candidate_originals,
 )
 from watcher.services.watcher_launcher import (
     SubprocessWatcherLauncher,
@@ -18,11 +34,6 @@ from .serializers import (
     FilingSerializer,
     AutomationRunSerializer,
 )
-
-import os
-import smtplib
-
-from email.message import EmailMessage
 
 
 @api_view(["GET"])
@@ -39,6 +50,7 @@ def runs(request):
     )
 
     return Response(serializer.data)
+
 
 @csrf_exempt
 @api_view(["POST"])
@@ -105,6 +117,7 @@ def trigger_run(request):
         }
     )
 
+
 @api_view(["GET"])
 def run_logs(request):
     """
@@ -169,8 +182,29 @@ def filings(request):
             failure_events__resolved_at__isnull=True,
         ).distinct()
 
+    elif status_param == "review":
+        # W-022:
+        # Review Queue contains both:
+        #
+        # 1. filings with unresolved processing failures, and
+        # 2. ambiguous 8-K/A filings requiring manual linking.
+        queryset = queryset.filter(
+            Q(
+                failure_events__isnull=False,
+                failure_events__resolved_at__isnull=True,
+            )
+            | Q(
+                form="8-K/A",
+                amends__isnull=True,
+                flag=True,
+                flag_reason=(
+                    AMBIGUOUS_AMENDMENT_TARGET
+                ),
+            )
+        ).distinct()
+
     else:
-        # By default, only show filings that successfully generated a summary
+        # By default, only show filings that successfully generated a summary.
         queryset = queryset.filter(
             summary_cache__isnull=False
         ).exclude(
@@ -197,6 +231,119 @@ def filings(request):
     )
 
     return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def resolve_amendment(request, filing_id):
+    """
+    W-022:
+    Allow an administrator to manually resolve an ambiguous
+    8-K/A amendment.
+
+    The selected original filing must satisfy the same candidate
+    matching policy used by amendment_linker.py.
+    """
+
+    original_id = request.data.get(
+        "original_id"
+    )
+
+    try:
+        original_id = int(
+            original_id
+        )
+
+    except (TypeError, ValueError):
+        return Response(
+            {
+                "status": "error",
+                "message": (
+                    "original_id must be a valid "
+                    "filing ID."
+                ),
+            },
+            status=400,
+        )
+
+    with transaction.atomic():
+        amendment = get_object_or_404(
+            Filing.objects
+            .select_for_update()
+            .select_related("company"),
+            pk=filing_id,
+            form="8-K/A",
+        )
+
+        # Never allow a second request to overwrite
+        # an already resolved amendment relationship.
+        if amendment.amends_id is not None:
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "This amendment is already linked."
+                    ),
+                },
+                status=409,
+            )
+
+        # Manual resolution is only valid for amendments
+        # explicitly marked as ambiguous.
+        if (
+            not amendment.flag
+            or amendment.flag_reason
+            != AMBIGUOUS_AMENDMENT_TARGET
+        ):
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "This amendment is not awaiting "
+                        "ambiguous-target review."
+                    ),
+                },
+                status=409,
+            )
+
+        # candidate_originals() enforces:
+        #
+        # - same company
+        # - form == 8-K
+        # - same report_date
+        #
+        # This prevents a reviewer/API caller from linking
+        # an unrelated filing.
+        original = get_object_or_404(
+            candidate_originals(
+                amendment
+            ),
+            pk=original_id,
+        )
+
+        amendment.amends = original
+        amendment.flag = False
+        amendment.flag_reason = ""
+
+        amendment.save(
+            update_fields=[
+                "amends",
+                "flag",
+                "flag_reason",
+                "updated_at",
+            ]
+        )
+
+    return Response(
+        {
+            "status": "linked",
+            "filing_id": amendment.id,
+            "original_id": original.id,
+            "amends": (
+                original.accession_number
+            ),
+        }
+    )
 
 
 class SMTPConfigView(APIView):

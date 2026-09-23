@@ -14,7 +14,9 @@ from watcher.knowledge_base.models import (
     Filing,
 )
 from watcher.knowledge_base.ingestion.amendment_linker import (
+    AMBIGUOUS_AMENDMENT_TARGET,
     link_amendment,
+    unresolved_ambiguous_amendments,
 )
 from watcher.services.failure_tracking_service import (
     FailureTrackingService,
@@ -70,6 +72,10 @@ class Command(BaseCommand):
 
         W-027:
         Amendment matching is delegated to the shared amendment linker.
+
+        W-022:
+        Ambiguous amendment targets are counted and persisted on the
+        AutomationRun so unresolved review work is visible.
         """
 
         run = None
@@ -102,6 +108,7 @@ class Command(BaseCommand):
         invalid = 0
 
         unlinked_count = 0
+        ambiguous_count = 0
         summary_count = 0
         email_count = 0
 
@@ -194,7 +201,6 @@ class Command(BaseCommand):
                     tickers,
                     start=1,
                 ):
-                    # Abort active run when scheduler is toggled off.
                     config = (
                         ScheduleConfig.objects.first()
                     )
@@ -416,9 +422,6 @@ class Command(BaseCommand):
                 # --------------------------------------------------
                 # W-027:
                 # Shared 8-K/A amendment reconciliation.
-                #
-                # Amendment matching policy now lives exclusively
-                # in amendment_linker.py.
                 # --------------------------------------------------
 
                 unlinked_amendments = (
@@ -428,7 +431,7 @@ class Command(BaseCommand):
                     )
                     .exclude(
                         flag_reason=(
-                            "AMBIGUOUS_AMENDMENT_TARGET"
+                            AMBIGUOUS_AMENDMENT_TARGET
                         )
                     )
                 )
@@ -454,6 +457,21 @@ class Command(BaseCommand):
                 )
 
                 # --------------------------------------------------
+                # W-022:
+                # Ambiguous amendment review count.
+                # --------------------------------------------------
+
+                ambiguous_count = (
+                    unresolved_ambiguous_amendments()
+                    .count()
+                )
+
+                self.stdout.write(
+                    f"Ambiguous 8-K/A requiring review: "
+                    f"{ambiguous_count}"
+                )
+
+                # --------------------------------------------------
                 # Summary / email counts
                 # --------------------------------------------------
 
@@ -464,7 +482,6 @@ class Command(BaseCommand):
                     .count()
                 )
 
-                # Preserve existing behaviour.
                 email_count = (
                     summary_count
                     if auto_index
@@ -509,8 +526,6 @@ class Command(BaseCommand):
                         )
 
             except Exception as exc:
-                # Ordinary watcher exceptions:
-                # log them and finalize the run as FAILED.
                 self.stderr.write(
                     self.style.ERROR(
                         "Watcher crashed unexpectedly: "
@@ -538,6 +553,11 @@ class Command(BaseCommand):
                         .count()
                     )
 
+                    ambiguous_count = (
+                        unresolved_ambiguous_amendments()
+                        .count()
+                    )
+
                     summary_count = (
                         FilingSummaryCache.objects.filter(
                             filing__automation_run=run
@@ -552,8 +572,6 @@ class Command(BaseCommand):
                     )
 
                 except Exception as exc:
-                    # Preserve initialized fallback values if final
-                    # statistics cannot be calculated.
                     self.stderr.write(
                         self.style.ERROR(
                             "Error computing final stats: "
@@ -592,6 +610,10 @@ class Command(BaseCommand):
                     unlinked_count
                 )
 
+                run.ambiguous_amendments_count = (
+                    ambiguous_count
+                )
+
                 run.save()
 
                 self.stdout.write(
@@ -602,13 +624,6 @@ class Command(BaseCommand):
         except BaseException as exc:
             # --------------------------------------------------
             # W-024 Part A
-            #
-            # Exception does not include KeyboardInterrupt or
-            # SystemExit. BaseException does.
-            #
-            # This outer handler guarantees that an abnormal
-            # interpreter-level interruption does not intentionally
-            # leave an AutomationRun marked RUNNING.
             # --------------------------------------------------
 
             if run is not None:
@@ -635,7 +650,6 @@ class Command(BaseCommand):
                         )
                     )
 
-                    # Keep in-memory object consistent as well.
                     run.status = (
                         AutomationRun.Status.FAILED
                     )
@@ -653,10 +667,6 @@ class Command(BaseCommand):
                             f"{finalize_exc}"
                         )
                     )
-
-                # --------------------------------------------------
-                # W-024 failure audit
-                # --------------------------------------------------
 
                 try:
                     FailureTrackingService.record(
@@ -687,14 +697,12 @@ class Command(BaseCommand):
                         )
                     )
 
-            # Preserve KeyboardInterrupt/SystemExit/etc.
             raise
 
         finally:
             # --------------------------------------------------
             # W-024:
-            # Explicitly release the session-level PostgreSQL
-            # advisory lock whenever possible.
+            # Release PostgreSQL advisory lock.
             # --------------------------------------------------
 
             if lock_acquired:
@@ -720,8 +728,6 @@ class Command(BaseCommand):
                         )
 
                 except Exception as unlock_exc:
-                    # Never replace the original watcher exception
-                    # with a lock-cleanup exception.
                     self.stderr.write(
                         self.style.ERROR(
                             "Unable to explicitly release "
