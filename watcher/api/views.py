@@ -13,6 +13,7 @@ from rest_framework.decorators import (
     api_view,
     permission_classes,
 )
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -157,29 +158,49 @@ def run_logs(request):
         })
 
 
+class FilingPagination(PageNumberPagination):
+    """
+    W-035: opt-in pagination for /api/filings/.
+
+    Used only when the caller sends ?page= or ?page_size=, so every
+    existing caller that expects a plain JSON list keeps getting one.
+    """
+
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 500
+
+
 @api_view(["GET"])
 def filings(request):
+    """
+    status parameter:
+        (none)      - all captured filings, except those with an
+                      unresolved failure (those live in the Review Queue).
+                      Includes filings that have no summary yet.
+        summarized  - previous default: summary exists, no unresolved failure.
+        failed      - unresolved failures only.
+        review      - failures + ambiguous 8-K/A (Review Queue, W-022).
+        flagged     - filings the Watcher flagged (flag=True).
+        all         - every captured filing.
+    """
+
     queryset = (
         Filing.objects
         .select_related("company")
-        .order_by("-created_at")
+        .order_by("-created_at", "-id")
     )
 
-    import datetime
-
-    start_date = datetime.datetime(
-        2026,
-        9,
-        14,
-        tzinfo=datetime.timezone.utc,
+    unresolved_failure = Q(
+        failure_events__isnull=False,
+        failure_events__resolved_at__isnull=True,
     )
 
     status_param = request.GET.get("status")
 
     if status_param == "failed":
         queryset = queryset.filter(
-            failure_events__isnull=False,
-            failure_events__resolved_at__isnull=True,
+            unresolved_failure
         ).distinct()
 
     elif status_param == "review":
@@ -189,10 +210,7 @@ def filings(request):
         # 1. filings with unresolved processing failures, and
         # 2. ambiguous 8-K/A filings requiring manual linking.
         queryset = queryset.filter(
-            Q(
-                failure_events__isnull=False,
-                failure_events__resolved_at__isnull=True,
-            )
+            unresolved_failure
             | Q(
                 form="8-K/A",
                 amends__isnull=True,
@@ -203,13 +221,26 @@ def filings(request):
             )
         ).distinct()
 
-    else:
-        # By default, only show filings that successfully generated a summary.
+    elif status_param == "summarized":
         queryset = queryset.filter(
             summary_cache__isnull=False
         ).exclude(
-            failure_events__isnull=False,
-            failure_events__resolved_at__isnull=True,
+            unresolved_failure
+        )
+
+    elif status_param == "flagged":
+        queryset = queryset.filter(
+            flag=True
+        )
+
+    elif status_param == "all":
+        pass
+
+    else:
+        # W-035: default shows every captured filing, summarized or not,
+        # except unresolved failures (shown in the Review Queue instead).
+        queryset = queryset.exclude(
+            unresolved_failure
         )
 
     ticker = request.GET.get("ticker")
@@ -223,6 +254,15 @@ def filings(request):
     if form:
         queryset = queryset.filter(
             form=form
+        )
+
+    # W-035: paginate only when explicitly requested.
+    if "page" in request.GET or "page_size" in request.GET:
+        paginator = FilingPagination()
+        page = paginator.paginate_queryset(queryset, request)
+
+        return paginator.get_paginated_response(
+            FilingSerializer(page, many=True).data
         )
 
     serializer = FilingSerializer(
