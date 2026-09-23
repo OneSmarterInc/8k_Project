@@ -81,7 +81,6 @@ class FilingSerializer(serializers.ModelSerializer):
             "entry_rule",
             "parsed_item_codes",
             "primary_document",
-            "primary_document",
             "source_url",
             "ingestion_status",
             "created_at",
