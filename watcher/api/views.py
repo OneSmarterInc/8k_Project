@@ -5,7 +5,7 @@ from email.message import EmailMessage
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 
@@ -23,6 +23,7 @@ from watcher.models import (
     AutomationRun,
     ScheduleConfig,
 )
+from watcher.knowledge_base.models import FailureEvent
 from watcher.knowledge_base.ingestion.amendment_linker import (
     AMBIGUOUS_AMENDMENT_TARGET,
     candidate_originals,
@@ -187,7 +188,21 @@ def filings(request):
 
     queryset = (
         Filing.objects
-        .select_related("company")
+        # Performance only: load related rows in a few batched queries
+        # instead of 3-4 queries per filing. Output is unchanged.
+        .select_related("company", "summary_cache", "amends")
+        .prefetch_related(
+            "amended_by",
+            Prefetch(
+                "failure_events",
+                queryset=(
+                    FailureEvent.objects
+                    .filter(resolved_at__isnull=True)
+                    .order_by("-created_at")
+                ),
+                to_attr="prefetched_unresolved_failures",
+            ),
+        )
         .order_by("-created_at", "-id")
     )
 
