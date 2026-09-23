@@ -114,16 +114,20 @@ class SubprocessWatcherLauncher:
 
         # Preserve W-023 detached subprocess behaviour.
         if os.name == "nt":
+             # CREATE_NO_WINDOW instead of DETACHED_PROCESS:
+            # venv\Scripts\python.exe re-launches the base python.exe.
+            # Under DETACHED_PROCESS that child gets a NEW visible console,
+            # and closing it kills the watcher. CREATE_NO_WINDOW gives a
+            # hidden console the child inherits. Still independent of
+            # Django's console (W-023 preserved).
             popen_kwargs[
                 "creationflags"
             ] = (
-                subprocess.DETACHED_PROCESS
+                subprocess.CREATE_NO_WINDOW
                 | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
-            popen_kwargs[
-                "start_new_session"
-            ] = True
+            popen_kwargs["start_new_session"] = True
 
         with open(
             log_path,

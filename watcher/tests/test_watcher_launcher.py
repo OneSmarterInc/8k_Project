@@ -132,13 +132,13 @@ class WatcherLauncherTestCase(TestCase):
             expected_flags = (
                 subprocess.DETACHED_PROCESS
                 | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_NO_WINDOW
             )
 
             self.assertEqual(
                 kwargs["creationflags"],
                 expected_flags,
             )
-
             self.assertNotIn(
                 "start_new_session",
                 kwargs,
