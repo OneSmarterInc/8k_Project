@@ -455,9 +455,13 @@ CORS_ALLOWED_ORIGINS = _env_list(
 # Admin-only actions add IsAdminUser on the view itself.
 # ---------------------------------------------------------------------
 
+# Security review #3: how long a login token stays valid, in hours.
+TOKEN_TTL_HOURS = _env_int("TOKEN_TTL_HOURS", 12)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        # Security review #3: tokens expire after TOKEN_TTL_HOURS.
+        "watcher.api.authentication.ExpiringTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
