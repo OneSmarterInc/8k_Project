@@ -528,6 +528,32 @@ CORS_ALLOWED_ORIGINS = _env_list(
 # Security review #3: how long a login token stays valid, in hours.
 TOKEN_TTL_HOURS = _env_int("TOKEN_TTL_HOURS", 12)
 
+# ---------------------------------------------------------------------
+# W-041: the session token is delivered as an HttpOnly cookie.
+#
+# JavaScript cannot read an HttpOnly cookie, so an XSS payload can no
+# longer steal the token and replay the session elsewhere.
+#
+# SameSite=Lax is safe here because the browser is same-origin with the
+# API: in development the Vite proxy forwards /api/* to Django, and in
+# production the frontend is served from the same host. The browser will
+# not attach this cookie to a cross-site request, which is what makes
+# CSRF a non-issue for this design.
+#
+# If the frontend is ever served from a DIFFERENT origin (the
+# VITE_API_BASE_URL case in the frontend .env.example), this must become
+# SameSite=None with Secure, CORS_ALLOW_CREDENTIALS=True, and
+# withCredentials on the axios client. Do not change SameSite without
+# changing all three.
+#
+# AUTH_COOKIE_SECURE defaults to "not DEBUG": off for http://localhost
+# in development, on in production so the cookie never travels in clear.
+# ---------------------------------------------------------------------
+
+AUTH_COOKIE_NAME = _env_str("AUTH_COOKIE_NAME", "watcher_auth")
+AUTH_COOKIE_SAMESITE = _env_str("AUTH_COOKIE_SAMESITE", "Lax")
+AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", not DEBUG)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         # Security review #3: tokens expire after TOKEN_TTL_HOURS.

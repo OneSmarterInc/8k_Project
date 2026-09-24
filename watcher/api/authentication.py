@@ -44,8 +44,60 @@ def get_valid_token(user):
     return token
 
 
+def auth_cookie_name():
+    return getattr(settings, "AUTH_COOKIE_NAME", "watcher_auth")
+
+
+def set_auth_cookie(response, token):
+    """
+    W-041: put the token in an HttpOnly cookie.
+
+    httponly=True is the whole point: JavaScript cannot read it, so an
+    XSS payload cannot steal the session.
+    """
+    response.set_cookie(
+        auth_cookie_name(),
+        token.key,
+        max_age=int(token_ttl().total_seconds()),
+        httponly=True,
+        samesite=getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax"),
+        secure=bool(getattr(settings, "AUTH_COOKIE_SECURE", False)),
+        path="/",
+    )
+
+    return response
+
+
+def clear_auth_cookie(response):
+    response.delete_cookie(
+        auth_cookie_name(),
+        path="/",
+        samesite=getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax"),
+    )
+
+    return response
+
+
 class ExpiringTokenAuthentication(TokenAuthentication):
-    """TokenAuthentication that also rejects tokens older than the TTL."""
+    """
+    TokenAuthentication that rejects tokens older than the TTL, and
+    accepts the token from EITHER source:
+
+        1. the HttpOnly cookie set at login (W-041, preferred), or
+        2. the Authorization: Token <key> header (unchanged).
+
+    The header path is deliberately retained. Dropping it would log out
+    every session that is mid-flight during a deploy, and would break
+    any script or test that authenticates by header.
+    """
+
+    def authenticate(self, request):
+        key = request.COOKIES.get(auth_cookie_name())
+
+        if key:
+            return self.authenticate_credentials(key)
+
+        return super().authenticate(request)
 
     def authenticate_credentials(self, key):
         user, token = super().authenticate_credentials(key)
