@@ -5,14 +5,16 @@ from django.core.mail import EmailMessage
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
-from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework.decorators import (
     api_view,
     permission_classes,
 )
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import (
+    IsAdminUser,
+    IsAuthenticated,
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -58,8 +60,8 @@ def runs(request):
     return Response(serializer.data)
 
 
-@csrf_exempt
 @api_view(["POST"])
+@permission_classes([IsAdminUser])
 def trigger_run(request):
     """
     Start one watcher run.
@@ -416,6 +418,8 @@ class SMTPConfigView(APIView):
     - "test" sends to the SAVED configuration only, never to a host
       supplied in the request, and only on SMTP ports.
     """
+        # W-010: SMTP settings are admin-only.
+    permission_classes = [IsAdminUser]
 
     def get(self, request):
         smtp = get_smtp_settings()
@@ -526,6 +530,13 @@ class SMTPConfigView(APIView):
 
 
 class ScheduleConfigView(APIView):
+
+    def get_permissions(self):
+        # W-010: anyone logged in may read the schedule;
+        # only admins may change it.
+        if self.request.method == "POST":
+            return [IsAdminUser()]
+        return [IsAuthenticated()]
 
     def get(self, request):
         config = ScheduleConfig.objects.first()

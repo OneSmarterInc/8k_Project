@@ -79,6 +79,12 @@ class AmendmentReviewApiTests(TestCase):
 
         self.client = APIClient()
 
+        # W-010: the API now requires a token. Read-only calls run as
+        # a normal logged-in user; tests that need admin re-authenticate.
+        self.client.force_authenticate(
+            user=self.normal_user
+        )
+    
     def test_ambiguous_amendment_appears_in_review_queue(self):
         response = self.client.get(
             reverse("filings"),

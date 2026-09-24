@@ -33,6 +33,13 @@ class FilingsApiW035Tests(TestCase):
         self.service = FilingRegistrationService()
         self.client = APIClient()
 
+        from django.contrib.auth import get_user_model
+        self.client.force_authenticate(
+            get_user_model().objects.create_user(
+                username="reader", password="pw-reader-123"
+            )
+        )
+
         self.summarized = self._register(1)
         FilingSummaryCache.objects.create(
             filing=self.summarized,

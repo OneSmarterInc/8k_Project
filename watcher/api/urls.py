@@ -1,4 +1,5 @@
 from django.urls import path
+from . import auth_views
 
 from .views import (
     SMTPConfigView,
@@ -11,7 +12,14 @@ from .views import (
 )
 
 
+
 urlpatterns = [
+    # W-010: token login
+    path("auth/login/", auth_views.login, name="auth_login"),
+    path("auth/me/", auth_views.me, name="auth_me"),
+    path("auth/logout/", auth_views.logout, name="auth_logout"),
+
+    # ... your existing paths stay below ...
     path(
         "filings/",
         filings,
