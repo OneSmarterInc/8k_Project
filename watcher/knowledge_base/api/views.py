@@ -1,7 +1,8 @@
 import json
 
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from watcher.knowledge_base.qa.grounded_qa_service import (
     GroundedQAError,
 )
@@ -194,7 +195,8 @@ def _serialize_result(result):
     }
 
 
-@csrf_exempt
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def ask_knowledge_base(request):
     if request.method != "POST":
         return JsonResponse(

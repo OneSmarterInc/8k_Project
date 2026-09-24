@@ -76,6 +76,20 @@ def _env_int(name, default):
     except ValueError:
         return default
 
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_list(name, default=""):
+    return [
+        item.strip()
+        for item in _env_str(name, default).split(",")
+        if item.strip()
+    ]
+
 
 def _env_float(name, default):
     try:
@@ -93,10 +107,14 @@ SECRET_KEY = _env_str(
     'django-insecure-*3$mgky-th#0y#q%q9l!5^=lv!kk03k58r_+dc5x#j*#oi^+h4',
 )
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# W-010: DEBUG and ALLOWED_HOSTS come from the environment.
+# DEBUG is OFF unless DJANGO_DEBUG=True is set explicitly.
+DEBUG = _env_bool("DJANGO_DEBUG", False)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = _env_list(
+    "DJANGO_ALLOWED_HOSTS",
+    "localhost,127.0.0.1",
+)
 
 
 # Application definition
@@ -109,6 +127,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework.authtoken',
     'watcher',
     "corsheaders",
     'django_apscheduler',
@@ -326,7 +345,6 @@ EMAIL_USE_SSL = SMTP_SECURITY == "SSL"
 # Set a timeout so we don't hang indefinitely if SMTP host is unreachable
 EMAIL_TIMEOUT = 10
 
-EMAIL_USE_SSL = SMTP_SECURITY == "SSL"
 
 
 DEFAULT_FROM_EMAIL = os.getenv(
@@ -348,11 +366,26 @@ SEC_ALERT_RECIPIENT_EMAIL = os.getenv(
     "SEC_ALERT_RECIPIENT_EMAIL",
     "",
 )
-CORS_ALLOWED_ORIGINS = [
+CORS_ALLOWED_ORIGINS = _env_list(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
 
-    "http://localhost:5173",
+# ---------------------------------------------------------------------
+# W-010: every API view requires a token by default.
+#
+# Clients send:  Authorization: Token <key>
+# Admin-only actions add IsAdminUser on the view itself.
+# ---------------------------------------------------------------------
 
-]
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
 
 # ---------------------------------------------------------------------
 # Event study entry rule

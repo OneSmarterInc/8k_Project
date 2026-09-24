@@ -11,7 +11,10 @@ from watcher.knowledge_base.models import (
     FilingSummaryCache,
     IngestionJob,
     ScheduleConfig,
+    ScheduleConfig,
+    SMTPConfig,
 )
+
 
 __all__ = [
     "AutomationRun",
@@ -26,4 +29,5 @@ __all__ = [
     "FilingSummaryCache",
     "IngestionJob",
     "ScheduleConfig",
+    "SMTPConfig",
 ]

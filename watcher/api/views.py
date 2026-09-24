@@ -1,20 +1,20 @@
 import os
-import smtplib
-
-from email.message import EmailMessage
 
 from django.conf import settings
+from django.core.mail import EmailMessage
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
-from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework.decorators import (
     api_view,
     permission_classes,
 )
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import (
+    IsAdminUser,
+    IsAuthenticated,
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,11 +22,16 @@ from watcher.models import (
     Filing,
     AutomationRun,
     ScheduleConfig,
+    SMTPConfig,
 )
 from watcher.knowledge_base.models import FailureEvent
 from watcher.knowledge_base.ingestion.amendment_linker import (
     AMBIGUOUS_AMENDMENT_TARGET,
     candidate_originals,
+)
+from watcher.services.smtp_settings import (
+    ALLOWED_SMTP_PORTS,
+    get_smtp_settings,
 )
 from watcher.services.watcher_launcher import (
     SubprocessWatcherLauncher,
@@ -35,6 +40,7 @@ from watcher.services.watcher_launcher import (
 from .serializers import (
     FilingSerializer,
     AutomationRunSerializer,
+    SMTPConfigSerializer,
 )
 
 
@@ -54,8 +60,8 @@ def runs(request):
     return Response(serializer.data)
 
 
-@csrf_exempt
 @api_view(["POST"])
+@permission_classes([IsAdminUser])
 def trigger_run(request):
     """
     Start one watcher run.
@@ -402,264 +408,135 @@ def resolve_amendment(request, filing_id):
 
 
 class SMTPConfigView(APIView):
+    """
+    W-034: SMTP settings for the UI.
+
+    - Settings are stored in the SMTPConfig table, never in .env.
+    - Every field is validated; newlines are rejected.
+    - The password is never accepted or returned. It lives only in the
+      SMTP_PASSWORD environment variable on the server.
+    - "test" sends to the SAVED configuration only, never to a host
+      supplied in the request, and only on SMTP ports.
+    """
+        # W-010: SMTP settings are admin-only.
+    permission_classes = [IsAdminUser]
 
     def get(self, request):
-        env_path = os.path.join(
-            settings.BASE_DIR,
-            ".env",
-        )
+        smtp = get_smtp_settings()
 
-        config = {
-            "senderName": "",
-            "smtpHost": "",
-            "smtpPort": "587",
-            "securityProtocol": "TLS",
-            "smtpUsername": "",
-            "senderEmail": "",
-            "replyToEmail": "",
-        }
-
-        if os.path.exists(env_path):
-            with open(
-                env_path,
-                "r",
-                encoding="utf-8-sig",
-            ) as f:
-
-                for line in f:
-                    if (
-                        "=" in line
-                        and not line.strip().startswith("#")
-                    ):
-                        k, v = line.strip().split(
-                            "=",
-                            1,
-                        )
-
-                        k = k.strip()
-                        v = v.strip()
-
-                        if k == "SMTP_SENDER_NAME":
-                            config["senderName"] = v
-
-                        elif k == "SMTP_HOST":
-                            config["smtpHost"] = v
-
-                        elif k == "SMTP_PORT":
-                            config["smtpPort"] = v
-
-                        elif k == "SMTP_SECURITY":
-                            config["securityProtocol"] = v
-
-                        elif k == "SMTP_USERNAME":
-                            config["smtpUsername"] = v
-
-                        elif k == "SMTP_SENDER_EMAIL":
-                            config["senderEmail"] = v
-
-                        elif k == "SMTP_REPLY_TO_EMAIL":
-                            config["replyToEmail"] = v
-
-        return Response(config)
+        return Response({
+            "senderName": smtp.sender_name,
+            "smtpHost": smtp.host,
+            "smtpPort": str(smtp.port),
+            "securityProtocol": smtp.security,
+            "smtpUsername": smtp.username,
+            "senderEmail": smtp.sender_email,
+            "replyToEmail": smtp.reply_to_email,
+            "passwordConfigured": bool(smtp.password),
+        })
 
     def post(self, request):
         action = request.GET.get("action")
-        data = request.data
+
+        if action == "save":
+            return self._save(request)
 
         if action == "test":
-            host = data.get("smtpHost")
-
-            port = int(
-                data.get(
-                    "smtpPort",
-                    587,
-                )
-            )
-
-            user = data.get(
-                "smtpUsername"
-            )
-
-            password = data.get(
-                "smtpPassword"
-            )
-
-            sender = data.get(
-                "senderEmail"
-            )
-
-            # Send to self for test
-            recipient = data.get(
-                "senderEmail"
-            )
-
-            msg = EmailMessage()
-
-            msg.set_content(
-                "This is a test email from the SEC Agentic Watcher "
-                "to verify SMTP settings."
-            )
-
-            msg["Subject"] = (
-                "Test Email - SEC Watcher"
-            )
-
-            msg["From"] = sender
-            msg["To"] = recipient
-
-            try:
-                server = smtplib.SMTP(
-                    host,
-                    port,
-                    timeout=10,
-                )
-
-                if (
-                    data.get("securityProtocol") == "TLS"
-                    or data.get("securityProtocol") == "STARTTLS"
-                ):
-                    server.starttls()
-
-                # Existing SMTP behaviour intentionally preserved.
-                server.login(
-                    user,
-                    password,
-                )
-
-                server.send_message(msg)
-                server.quit()
-
-                return Response({
-                    "status": "success",
-                    "message": (
-                        "Test email sent successfully!"
-                    ),
-                })
-
-            except Exception as e:
-                return Response({
-                    "status": "error",
-                    "message": str(e),
-                })
-
-        elif action == "save":
-            env_path = os.path.join(
-                settings.BASE_DIR,
-                ".env",
-            )
-
-            # Read existing
-            lines = []
-
-            if os.path.exists(env_path):
-                with open(
-                    env_path,
-                    "r",
-                    encoding="utf-8-sig",
-                ) as f:
-                    lines = f.readlines()
-
-            # Prepare updates mapping
-            updates = {
-                "SMTP_SENDER_NAME": data.get(
-                    "senderName"
-                ),
-                "SMTP_HOST": data.get(
-                    "smtpHost"
-                ),
-                "SMTP_PORT": data.get(
-                    "smtpPort"
-                ),
-                "SMTP_SECURITY": data.get(
-                    "securityProtocol"
-                ),
-                "SMTP_USERNAME": data.get(
-                    "smtpUsername"
-                ),
-                "SMTP_SENDER_EMAIL": data.get(
-                    "senderEmail"
-                ),
-                "SMTP_REPLY_TO_EMAIL": data.get(
-                    "replyToEmail"
-                ),
-            }
-
-            if data.get("smtpPassword"):
-                updates["SMTP_PASSWORD"] = (
-                    data.get("smtpPassword")
-                )
-
-            new_lines = []
-            updated_keys = set()
-
-            for line in lines:
-                if (
-                    "=" in line
-                    and not line.strip().startswith("#")
-                ):
-                    k, _ = line.split(
-                        "=",
-                        1,
-                    )
-
-                    k = k.strip()
-
-                    if k in updates:
-                        val = (
-                            updates[k]
-                            if updates[k] is not None
-                            else ""
-                        )
-
-                        new_lines.append(
-                            f"{k}={val}\n"
-                        )
-
-                        updated_keys.add(k)
-                        continue
-
-                new_lines.append(line)
-
-            # Add missing keys
-            for k, v in updates.items():
-                if (
-                    k not in updated_keys
-                    and v
-                ):
-                    if (
-                        not new_lines
-                        or not new_lines[-1].endswith("\n")
-                    ):
-                        new_lines.append("\n")
-
-                    new_lines.append(
-                        f"{k}={v}\n"
-                    )
-
-            with open(
-                env_path,
-                "w",
-                encoding="utf-8-sig",
-            ) as f:
-                f.writelines(new_lines)
-
-            return Response({
-                "status": "success",
-                "message": (
-                    "Configuration saved to .env"
-                ),
-            })
+            return self._test()
 
         return Response(
-            {
-                "status": "error",
-                "message": "Invalid action",
-            },
+            {"status": "error", "message": "Invalid action"},
             status=400,
         )
 
+    def _save(self, request):
+        serializer = SMTPConfigSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid SMTP settings.",
+                    "errors": serializer.errors,
+                },
+                status=400,
+            )
+
+        data = serializer.validated_data
+
+        SMTPConfig.objects.update_or_create(
+            pk=1,
+            defaults={
+                "sender_name": data["senderName"],
+                "host": data["smtpHost"],
+                "port": data["smtpPort"],
+                "security": data["securityProtocol"],
+                "username": data["smtpUsername"],
+                "sender_email": data["senderEmail"],
+                "reply_to_email": data.get("replyToEmail", ""),
+            },
+        )
+
+        # Any smtpPassword in the request is deliberately ignored.
+        return Response({
+            "status": "success",
+            "message": "SMTP settings saved.",
+        })
+
+    def _test(self):
+        smtp = get_smtp_settings()
+
+        if not smtp.host or not smtp.sender_email:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Save SMTP settings before testing.",
+                },
+                status=400,
+            )
+
+        if smtp.port not in ALLOWED_SMTP_PORTS:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Saved port is not an allowed SMTP port.",
+                },
+                status=400,
+            )
+
+        message = EmailMessage(
+            subject="Test Email - SEC Watcher",
+            body=(
+                "This is a test email from the SEC Agentic Watcher "
+                "to verify SMTP settings."
+            ),
+            from_email=smtp.from_address,
+            to=[smtp.sender_email],
+            connection=smtp.connection(timeout=10),
+        )
+
+        try:
+            message.send(fail_silently=False)
+        except Exception as exc:
+            return Response({
+                "status": "error",
+                "message": f"Test email failed: {exc}",
+            })
+
+        return Response({
+            "status": "success",
+            "message": "Test email sent successfully!",
+        })
+
 
 class ScheduleConfigView(APIView):
+
+    def get_permissions(self):
+        # W-010: anyone logged in may read the schedule;
+        # only admins may change it.
+        if self.request.method == "POST":
+            return [IsAdminUser()]
+        return [IsAuthenticated()]
 
     def get(self, request):
         config = ScheduleConfig.objects.first()

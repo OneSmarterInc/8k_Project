@@ -1,4 +1,5 @@
 from watcher.knowledge_base.models import FailureEvent
+from watcher.services.item_codes import format_item_codes
 from watcher.services.failure_tracking_service import (
     FailureTrackingService,
 )
@@ -131,7 +132,8 @@ class FilingPostProcessingService:
 
         if item_verification is not None:
 
-            registered_filing.parsed_item_codes = (
+                        # W-036: store "1.01;9.01", never str(tuple).
+            registered_filing.parsed_item_codes = format_item_codes(
                 item_verification.parsed_items
             )
 
