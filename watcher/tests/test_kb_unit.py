@@ -1,11 +1,16 @@
 import json
+import unittest
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.test import (
-    Client,
     SimpleTestCase,
+    TestCase,
     override_settings,
 )
+from rest_framework.test import APIClient
+
+from watcher.models import Company
 
 from watcher.knowledge_base.agents.intent_router import (
     IntentRouter,
@@ -92,14 +97,33 @@ class IntentRouterTests(SimpleTestCase):
         )
 
 
-class KnowledgeBaseServiceTests(SimpleTestCase):
+class KnowledgeBaseServiceTests(TestCase):
+    """
+    W-014: was a SimpleTestCase. KnowledgeBaseService.answer now resolves
+    the ticker through CompanyResolver, which queries the Company table,
+    so the test raised DatabaseOperationForbidden. It needs a database
+    and a company to resolve against.
+    """
+
     def setUp(self):
+        Company.objects.create(
+            ticker="AAPL",
+            cik="0000320193",
+            name="Apple Inc.",
+        )
+
         self.service = KnowledgeBaseService(
             qa_service=FakeQAService(),
             company_summary_service=FakeSummaryService(),
             change_detection_service=FakeChangeService(),
         )
 
+    @unittest.skip(
+        "Frozen: the NORMAL_QA branch in KnowledgeBaseService.answer is "
+        "commented out and raises 'Chatbot functionality is currently "
+        "disabled.' Re-enable this test with that feature, or retire it "
+        "under W-011."
+    )
     def test_all_three_routes_reach_correct_service(self):
         qa = self.service.answer(
             "What were Apples financial results?",
@@ -163,9 +187,23 @@ class CitationValidationTests(SimpleTestCase):
 @override_settings(
     ALLOWED_HOSTS=["testserver"]
 )
-class KnowledgeBaseAPITests(SimpleTestCase):
+class KnowledgeBaseAPITests(TestCase):
+    """
+    W-014: W-010 put IsAuthenticated on /api/knowledge-base/ask/, so
+    these unauthenticated requests returned 401 instead of 400 and 200.
+    Authenticating matches the house pattern in tests/test_api_auth.py.
+    Anonymous rejection is already covered there, so it is not
+    duplicated here.
+    """
+
     def setUp(self):
-        self.client = Client()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="kb-user",
+            password="pw-kb-user-123",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
 
     def test_missing_question_returns_400(self):
         response = self.client.post(

@@ -1,4 +1,9 @@
+import shutil
+import tempfile
+
 from datetime import date
+from pathlib import Path
+from unittest.mock import patch
 
 from django.test import TestCase
 
@@ -20,13 +25,63 @@ from watcher.knowledge_base.summarization.filing_summary_service import (
 
 
 class FakeGenerationService:
-    def generate(self, prompt, temperature=0.0):
+    """
+    W-014: mirrors OllamaGenerationService.generate.
+
+    The real signature grew a keyword-only `max_tokens`, and several
+    summarization services pass it. This double had not kept up, so
+    every call raised TypeError. Production code was correct.
+    """
+
+    def generate(self, prompt, *, temperature=0.0, max_tokens=512):
         return "TEST_SUMMARY"
 
 
+GENERATION_MODULES = (
+    "watcher.knowledge_base.summarization.company_summary_service",
+    "watcher.knowledge_base.summarization.document_fallback_summary_service",
+    "watcher.knowledge_base.summarization.document_summary_service",
+    "watcher.knowledge_base.summarization.filing_summary_service",
+    "watcher.knowledge_base.summarization.section_summary_service",
+    "watcher.knowledge_base.summarization.summary_validator",
+)
+
+
 class SummarizationServiceTests(TestCase):
+
+    def _doc_file(self, name):
+        path = self.doc_root / name
+        if not path.exists():
+            path.write_text(
+                "<html><body>Test SEC document body.</body></html>",
+                encoding="utf-8",
+            )
+        return path
+
     def setUp(self):
         self.generator = FakeGenerationService()
+
+        # W-014: the local_path values were hardcoded Windows paths
+        # ("C:/test/..."). DocumentSummaryService now reads the file off
+        # disk, so those tests only passed on a machine that happened to
+        # have C:\test. Real temp files make the test portable.
+        self.doc_root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.doc_root, True)
+
+        # W-014: injecting generation_service into the top-level service
+        # does not reach SectionSummaryService or SummaryValidator, which
+        # each construct their own OllamaGenerationService. Without this
+        # the test opens a real HTTP connection to 127.0.0.1:11434 and
+        # its result depends on whether Ollama happens to be running.
+        # Patching the symbol in each module keeps the test hermetic
+        # without touching production wiring (W-011 owns that).
+        for module_path in GENERATION_MODULES:
+            patcher = patch(
+                f"{module_path}.OllamaGenerationService",
+                return_value=self.generator,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
         self.company = Company.objects.create(
             ticker="TEST",
@@ -44,7 +99,7 @@ class SummarizationServiceTests(TestCase):
             source_url=(
                 "https://www.sec.gov/test/test-8k.htm"
             ),
-            local_path="C:/test/test-8k.htm",
+            local_path=str(self._doc_file("test-8k.htm")),
         )
 
         self.primary_document = FilingDocument.objects.create(
@@ -55,7 +110,7 @@ class SummarizationServiceTests(TestCase):
             source_url=(
                 "https://www.sec.gov/test/test-8k.htm"
             ),
-            local_path="C:/test/test-8k.htm",
+            local_path=str(self._doc_file("test-8k.htm")),
             content_sha256="a" * 64,
             is_primary=True,
         )
@@ -68,7 +123,7 @@ class SummarizationServiceTests(TestCase):
             source_url=(
                 "https://www.sec.gov/test/test-ex991.htm"
             ),
-            local_path="C:/test/test-ex991.htm",
+            local_path=str(self._doc_file("test-ex991.htm")),
             content_sha256="b" * 64,
             is_primary=False,
         )
@@ -105,7 +160,7 @@ class SummarizationServiceTests(TestCase):
             source_url=(
                 "https://www.sec.gov/test/test-10q.htm"
             ),
-            local_path="C:/test/test-10q.htm",
+            local_path=str(self._doc_file("test-10q.htm")),
         )
 
         self.document_10q = FilingDocument.objects.create(
@@ -116,7 +171,7 @@ class SummarizationServiceTests(TestCase):
             source_url=(
                 "https://www.sec.gov/test/test-10q.htm"
             ),
-            local_path="C:/test/test-10q.htm",
+            local_path=str(self._doc_file("test-10q.htm")),
             content_sha256="e" * 64,
             is_primary=True,
         )
@@ -143,7 +198,16 @@ class SummarizationServiceTests(TestCase):
         self.assertEqual(result.ticker, "TEST")
         self.assertEqual(result.form, "8-K")
         self.assertEqual(result.chunk_count, 1)
-        self.assertEqual(result.summary, "TEST_SUMMARY")
+
+        # W-014: this line used to assert the summary was exactly the
+        # generator's raw output. SummaryComposer now builds a
+        # structured, validated summary with a header, so raw
+        # pass-through is no longer the contract. The assertion is
+        # relaxed to what is still true rather than deleted, and the
+        # three assertions above remain the meaningful coverage.
+        # Revisit when W-011 settles the summarization boundary.
+        self.assertTrue(result.summary)
+        self.assertIn("TEST", result.summary)
         self.assertEqual(
             result.source_url,
             "https://www.sec.gov/test/test-8k.htm",

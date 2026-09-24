@@ -1,8 +1,11 @@
 import tempfile
 from pathlib import Path
 
-from django.test import SimpleTestCase
+from datetime import date
 
+from django.test import TestCase
+
+from watcher.models import Company, Filing
 from watcher.services.ticker_processor import TickerProcessor
 
 
@@ -16,17 +19,37 @@ class FakeResolver:
 
 
 class FakeDiscovery:
-    def list_filings(self, *, cik, form):
-        if form != "8-K":
-            return []
+    """
+    W-014: mirrors the real FilingDiscovery contract.
 
-        return [
-            {
-                "accession_number": "TEST-ACCESSION-001",
-                "primary_document": "test.htm",
-                "filing_date": "2026-09-12",
+    W-007 changed list_filings to return a shard-aware dict rather than
+    a bare list. This double still returned a list, so TickerProcessor's
+    `discovery_result.get("filings", [])` raised AttributeError, the
+    error was recorded as a discovery failure, and `downloaded` came
+    back 0. Production code was correct; the double had drifted.
+    """
+
+    def list_filings(self, *, cik, form, start_date=None, end_date=None):
+        if form != "8-K":
+            return {
+                "filings": [],
+                "shards_expected": 0,
+                "shards_parsed": 0,
+                "shard_errors": [],
             }
-        ]
+
+        return {
+            "filings": [
+                {
+                    "accession_number": "TEST-ACCESSION-001",
+                    "primary_document": "test.htm",
+                    "filing_date": "2026-09-12",
+                }
+            ],
+            "shards_expected": 0,
+            "shards_parsed": 0,
+            "shard_errors": [],
+        }
 
 
 class FakeRegistry:
@@ -131,13 +154,58 @@ class FakeDownloader:
 
 
 class FakeRegistrationService:
-    def __init__(self):
+    """
+    W-014: returns a REAL Filing row.
+
+    With auto_index=True the post-processing stage calls
+    registered_filing.save() and hands the row to FailureEvent, so a
+    plain object() could never work once W-003/W-036 landed. The double
+    now creates the row the real service would have created.
+    """
+
+    def __init__(self, company):
         self.calls = 0
-        self.filing = object()
+        self.company = company
+        self.filing = None
 
     def register(self, **kwargs):
         self.calls += 1
+
+        if self.filing is None:
+            self.filing = Filing.objects.create(
+                company=self.company,
+                accession_number="TEST-ACCESSION-001",
+                sequence=1,
+                form="8-K",
+                filing_date=date(2026, 9, 12),
+                primary_document="test.htm",
+                source_url="https://www.sec.gov/test/test.htm",
+                local_path="/tmp/test.htm",
+            )
+
         return self.filing
+
+
+class FakeSummaryService:
+    """Keeps the LLM summarization stack out of this test (W-011)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def summarize_filing(self, filing_id):
+        self.calls += 1
+        return {"filing_id": filing_id, "summary": "TEST_SUMMARY"}
+
+
+class FakeEmailService:
+    """Keeps SMTP out of this test."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def send(self, **kwargs):
+        self.calls += 1
+        return False
 
 
 class FakeIndexingService:
@@ -163,8 +231,15 @@ class FakeIndexingService:
 
 
 class TickerProcessorAutoIndexTests(
-    SimpleTestCase
+    TestCase
 ):
+    def setUp(self):
+        self.company = Company.objects.create(
+            ticker="AAPL",
+            cik="320193",
+            name="Apple Inc.",
+        )
+
     def _build_processor(
         self,
         *,
@@ -174,7 +249,7 @@ class TickerProcessorAutoIndexTests(
     ):
         registry = FakeRegistry()
         registration = (
-            FakeRegistrationService()
+            FakeRegistrationService(self.company)
         )
 
         processor = TickerProcessor(
@@ -184,6 +259,8 @@ class TickerProcessorAutoIndexTests(
             registry=registry,
             registration_service=registration,
             indexing_service=indexing_service,
+            summary_service=FakeSummaryService(),
+            filing_email_service=FakeEmailService(),
             auto_index=auto_index,
         )
 
