@@ -287,6 +287,76 @@ if (
         "Unsafe database configuration: "
         "test database must be different from the application database."
     )
+
+# ---------------------------------------------------------------------
+# W-039: cache backend
+#
+# DRF counts login throttle hits (watcher/api/throttles.py) in the
+# Django cache, and the schedule view stores the "abort_automation_run"
+# flag there. With no CACHES block Django falls back to LocMemCache,
+# which is PER PROCESS: under N gunicorn workers each worker keeps its
+# own counter, so the effective login limit becomes the configured rate
+# times N.
+#
+# The default below is locmem, which is byte-for-byte what Django was
+# already doing, so nothing changes for single-process development.
+# Production selects a shared backend with CACHE_BACKEND:
+#
+#   CACHE_BACKEND=redis     REDIS_URL=redis://127.0.0.1:6379/1
+#                           (needs the "redis" package: pip install redis)
+#
+#   CACHE_BACKEND=database  (no extra package; run once:
+#                            python manage.py createcachetable)
+#
+# watcher/checks.py raises watcher.W001 when DEBUG is off and the
+# selected backend is per-process, so this cannot ship silently.
+# ---------------------------------------------------------------------
+
+CACHE_BACKEND = _env_str("CACHE_BACKEND", "locmem").lower()
+
+if CACHE_BACKEND == "redis":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _env_str(
+                "REDIS_URL",
+                "redis://127.0.0.1:6379/1",
+            ),
+        }
+    }
+
+elif CACHE_BACKEND == "database":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": _env_str(
+                "CACHE_TABLE_NAME",
+                "django_cache_table",
+            ),
+        }
+    }
+
+else:
+    # Unchanged default. Shared only within one process.
+    CACHES = {
+        "default": {
+            "BACKEND": (
+                "django.core.cache.backends.locmem.LocMemCache"
+            ),
+            "LOCATION": _env_str(
+                "CACHE_LOCATION",
+                "watcher-default",
+            ),
+        }
+    }
+
+# Backends that cannot be shared between processes. Read by
+# watcher/checks.py; kept here so the list lives next to the config.
+PER_PROCESS_CACHE_BACKENDS = (
+    "django.core.cache.backends.locmem.LocMemCache",
+    "django.core.cache.backends.dummy.DummyCache",
+)
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

@@ -19,3 +19,8 @@ django-cors-headers==4.9.0
 apscheduler==3.10.4
 django-apscheduler==0.7.0
 waitress==3.0.2
+
+# W-039: optional. Only needed when CACHE_BACKEND=redis.
+# The database cache backend (CACHE_BACKEND=database) needs no package,
+# just "python manage.py createcachetable".
+# redis>=5.0
