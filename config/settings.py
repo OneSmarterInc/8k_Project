@@ -466,6 +466,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Login brute-force protection. Used only by the throttles on
+    # POST /api/auth/login/ (watcher/api/throttles.py); no global
+    # DEFAULT_THROTTLE_CLASSES, so other endpoints are not limited.
+    "DEFAULT_THROTTLE_RATES": {
+        "login_ip": _env_str("LOGIN_RATE_IP", "10/minute"),
+        "login_user": _env_str("LOGIN_RATE_USER", "5/minute"),
+    },
 }
 
 # ---------------------------------------------------------------------

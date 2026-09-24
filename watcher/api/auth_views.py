@@ -13,10 +13,13 @@ from rest_framework.decorators import (
     api_view,
     authentication_classes,
     permission_classes,
+    throttle_classes,
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from watcher.api.authentication import get_valid_token
+
+from .throttles import LoginIPRateThrottle, LoginUsernameRateThrottle
 
 
 def _user_payload(user):
@@ -29,6 +32,7 @@ def _user_payload(user):
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
+@throttle_classes([LoginIPRateThrottle, LoginUsernameRateThrottle])
 def login(request):
     username = str(request.data.get("username") or "").strip()
     password = str(request.data.get("password") or "")
