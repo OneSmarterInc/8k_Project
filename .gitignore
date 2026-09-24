@@ -24,3 +24,4 @@ watcher_latest.log
 
 # SMTP test files
 test_smtp.py
+reports/
