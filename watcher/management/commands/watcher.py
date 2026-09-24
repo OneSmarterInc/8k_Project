@@ -648,6 +648,67 @@ class Command(BaseCommand):
                     f"marked as {final_status}."
                 )
 
+            # --------------------------------------------------
+            # W-038:
+            # Export the append-only queue file at the end of a
+            # nightly sweep (R-13 / RM-01).
+            #
+            # Deliberately outside the inner finally, so it runs only
+            # after the AutomationRun is already finalized. The export
+            # is read-only and fully wrapped: it cannot change the run
+            # status, and an export failure is recorded but never
+            # propagates into the capture path.
+            # --------------------------------------------------
+
+            if sweep:
+                try:
+                    from django.core.management import call_command
+                    from watcher.management.commands.export_queue import (
+                        market_today,
+                    )
+
+                    # The sweep runs at 22:30 ET, so "today" in market
+                    # time is the day that just settled. days=2 also
+                    # picks up yesterday, matching the wider lookback
+                    # W-037 gives the sweep.
+                    call_command(
+                        "export_queue",
+                        date=market_today().isoformat(),
+                        days=2,
+                        stdout=self.stdout,
+                    )
+
+                except Exception as export_exc:
+                    self.stderr.write(
+                        self.style.WARNING(
+                            "W-038: queue export failed and was "
+                            "skipped. The watcher run is unaffected: "
+                            f"{export_exc}"
+                        )
+                    )
+
+                    try:
+                        FailureTrackingService.record(
+                            stage=(
+                                FailureEvent
+                                .Stage
+                                .DISCOVERY
+                            ),
+                            code=(
+                                FailureEvent
+                                .Code
+                                .UNKNOWN
+                            ),
+                            message=(
+                                "W-038 queue export failed: "
+                                f"{type(export_exc).__name__}: "
+                                f"{export_exc}"
+                            ),
+                        )
+
+                    except Exception:
+                        pass
+
         except BaseException as exc:
             # --------------------------------------------------
             # W-024 Part A

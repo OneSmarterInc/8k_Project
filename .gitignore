@@ -25,3 +25,5 @@ watcher_latest.log
 # SMTP test files
 test_smtp.py
 reports/
+# W-038 queue file exports
+queue/
