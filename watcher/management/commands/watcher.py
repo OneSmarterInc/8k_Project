@@ -572,7 +572,7 @@ class Command(BaseCommand):
                 # Normal AutomationRun finalization
                 # --------------------------------------------------
 
-                # try:
+                try:
                 #     unlinked_count = (
                 #         Filing.objects.filter(
                 #             form="8-K/A",

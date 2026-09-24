@@ -6,9 +6,12 @@ from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
 
-from watcher.knowledge_base.ingestion.amendment_linker import (
-    link_amendment,
-)
+# 8-K/A DISABLED: duplicate live import left behind by the B-001 edit.
+# Nothing calls link_amendment any more, and while this import stayed
+# live it kept amendment_linker.py loaded on every registration.
+# from watcher.knowledge_base.ingestion.amendment_linker import (
+#     link_amendment,
+# )
 from watcher.knowledge_base.models import (
     Company,
     Filing,
