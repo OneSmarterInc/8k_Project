@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import secrets
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -101,15 +102,91 @@ def _env_float(name, default):
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = _env_str(
-    'DJANGO_SECRET_KEY',
-    'django-insecure-*3$mgky-th#0y#q%q9l!5^=lv!kk03k58r_+dc5x#j*#oi^+h4',
-)
-
 # W-010: DEBUG and ALLOWED_HOSTS come from the environment.
 # DEBUG is OFF unless DJANGO_DEBUG=True is set explicitly.
+# (DEBUG is read first because the SECRET_KEY rule below depends on it.)
 DEBUG = _env_bool("DJANGO_DEBUG", False)
+
+# ---------------------------------------------------------------------
+# SECRET_KEY (security review #1)
+#
+# Django signs sessions and password-reset links with this key, so a
+# server must never run with the value published in the repository.
+#
+# Order of precedence (nothing ever refuses to start):
+#   1. DJANGO_SECRET_KEY from the environment / .env  -> used as-is.
+#   2. DEBUG=True (local laptop)                       -> dev-only key,
+#                                                         same as before.
+#   3. Otherwise -> a random key generated ONCE and saved to
+#      backend/.secret_key (git-ignored). Every process on this machine
+#      (runserver, watcher subprocess, scheduler, backups) reads the
+#      same file, so they all share one key.
+#
+# DRF login tokens are stored in the database, not signed with this key,
+# so the React app is unaffected by which key is in use.
+# ---------------------------------------------------------------------
+
+_DEV_ONLY_SECRET_KEY = (
+    'django-insecure-*3$mgky-th#0y#q%q9l!5^=lv!kk03k58r_+dc5x#j*#oi^+h4'
+)
+
+_UNUSABLE_SECRET_KEYS = {
+    "",
+    "change-me-in-production",
+    _DEV_ONLY_SECRET_KEY,
+}
+
+_SECRET_KEY_FILE = BASE_DIR / ".secret_key"
+
+
+def _read_secret_key_file(path):
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return "" if value in _UNUSABLE_SECRET_KEYS else value
+
+
+def _load_or_create_secret_key(path):
+    """
+    Return the key stored in `path`, creating it once if needed.
+
+    Creation uses O_CREAT | O_EXCL, so if two processes start at the same
+    moment only one writes the file and the other reads what it wrote.
+    If the folder is not writable, fall back to an in-memory random key:
+    the server still starts (sessions just reset on restart).
+    """
+    existing = _read_secret_key_file(path)
+    if existing:
+        return existing
+
+    new_key = secrets.token_urlsafe(50)
+
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another process created it first (or it held an unusable
+        # value): use whatever is there if it is valid.
+        return _read_secret_key_file(path) or new_key
+    except OSError:
+        return new_key
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(new_key)
+    except OSError:
+        return new_key
+
+    return new_key
+
+
+SECRET_KEY = _env_str("DJANGO_SECRET_KEY", "")
+
+if SECRET_KEY in _UNUSABLE_SECRET_KEYS:
+    if DEBUG:
+        SECRET_KEY = _DEV_ONLY_SECRET_KEY
+    else:
+        SECRET_KEY = _load_or_create_secret_key(_SECRET_KEY_FILE)
 
 ALLOWED_HOSTS = _env_list(
     "DJANGO_ALLOWED_HOSTS",
