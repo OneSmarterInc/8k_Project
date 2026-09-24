@@ -1,11 +1,12 @@
 import logging
 import re
 
+
 from django.conf import settings
 from django.core.mail import (
     EmailMultiAlternatives,
 )
-
+from watcher.services.smtp_settings import get_smtp_settings
 
 logger = logging.getLogger(__name__)
 
@@ -516,29 +517,41 @@ class FilingNotificationService:
         # Sender configuration.
         # ---------------------------------------------------------
 
-        sender_name = getattr(
-            settings,
-            "SEC_EMAIL_SENDER_NAME",
-            "SEC Filing Watcher",
-        )
+        # sender_name = getattr(
+        #     settings,
+        #     "SEC_EMAIL_SENDER_NAME",
+        #     "SEC Filing Watcher",
+        # )
 
-        sender_email = getattr(
-            settings,
-            "DEFAULT_FROM_EMAIL",
-            "",
-        )
+        # sender_email = getattr(
+        #     settings,
+        #     "DEFAULT_FROM_EMAIL",
+        #     "",
+        # )
 
-        if not sender_email:
+        # if not sender_email:
+        #     logger.warning(
+        #         "SEC email skipped: "
+        #         "DEFAULT_FROM_EMAIL is empty."
+        #     )
+        #     return False
+
+        # sender = (
+        #     f"{sender_name} "
+        #     f"<{sender_email}>"
+        # )
+
+                # W-034: sender, host and reply-to come from the saved
+        # SMTPConfig row (falling back to .env); password from env only.
+        smtp = get_smtp_settings()
+
+        if not smtp.sender_email:
             logger.warning(
-                "SEC email skipped: "
-                "DEFAULT_FROM_EMAIL is empty."
+                "SEC email skipped: sender email is not configured."
             )
             return False
 
-        sender = (
-            f"{sender_name} "
-            f"<{sender_email}>"
-        )
+        sender = smtp.from_address
 
         # ---------------------------------------------------------
         # Subject.
@@ -588,11 +601,7 @@ class FilingNotificationService:
         # Optional reply-to.
         # ---------------------------------------------------------
 
-        reply_to_email = getattr(
-            settings,
-            "SEC_REPLY_TO_EMAIL",
-            "",
-        )
+        reply_to_email = smtp.reply_to_email
         
         html_body = self._build_html_body(
             ticker=ticker,
@@ -625,6 +634,7 @@ class FilingNotificationService:
                 if reply_to_email
                 else None
             ),
+            connection=smtp.connection(),
         )
         
         email.attach_alternative(html_body, "text/html")

@@ -239,3 +239,47 @@ class FilingSerializer(serializers.ModelSerializer):
             }
             for candidate in candidates
         ]
+
+        # ----------------------------------------------------------------------
+# W-034: strict validation for the SMTP settings form.
+# ----------------------------------------------------------------------
+
+import re as _re
+
+from watcher.services.smtp_settings import ALLOWED_SMTP_PORTS
+
+_HOSTNAME_RE = _re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+
+
+class SMTPConfigSerializer(serializers.Serializer):
+    senderName = serializers.CharField(max_length=200, allow_blank=True)
+    smtpHost = serializers.CharField(max_length=253)
+    smtpPort = serializers.IntegerField(min_value=1, max_value=65535)
+    securityProtocol = serializers.ChoiceField(
+        choices=["TLS", "STARTTLS", "SSL", "NONE"]
+    )
+    smtpUsername = serializers.CharField(max_length=254, allow_blank=True)
+    senderEmail = serializers.EmailField()
+    replyToEmail = serializers.EmailField(
+        allow_blank=True, required=False, default=""
+    )
+
+    def validate(self, data):
+        # Newlines were the .env injection vector. Reject them everywhere.
+        for key, value in data.items():
+            if isinstance(value, str) and ("\n" in value or "\r" in value):
+                raise serializers.ValidationError(
+                    {key: "Newlines are not allowed."}
+                )
+
+        if not _HOSTNAME_RE.match(data["smtpHost"]):
+            raise serializers.ValidationError(
+                {"smtpHost": "Invalid hostname."}
+            )
+
+        if data["smtpPort"] not in ALLOWED_SMTP_PORTS:
+            raise serializers.ValidationError(
+                {"smtpPort": "Port must be one of 25, 465, 587, 2525."}
+            )
+
+        return data

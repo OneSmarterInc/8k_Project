@@ -857,3 +857,38 @@ class FailureEvent(models.Model):
         return (
             f"{self.stage}: {self.code}"
         )
+
+class SMTPConfig(models.Model):
+    """
+    W-034: SMTP settings edited from the UI.
+
+    Stored in the database, never written to .env. Exactly one row
+    (pk=1). The password is NOT stored here: it stays in the server
+    environment as SMTP_PASSWORD, set by whoever deploys the server.
+    """
+
+    class Security(models.TextChoices):
+        TLS = "TLS", "TLS"
+        STARTTLS = "STARTTLS", "STARTTLS"
+        SSL = "SSL", "SSL"
+        NONE = "NONE", "None"
+
+    sender_name = models.CharField(max_length=200, blank=True)
+    host = models.CharField(max_length=253)
+    port = models.PositiveIntegerField(default=587)
+    security = models.CharField(
+        max_length=10,
+        choices=Security.choices,
+        default=Security.TLS,
+    )
+    username = models.CharField(max_length=254, blank=True)
+    sender_email = models.EmailField()
+    reply_to_email = models.EmailField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "SMTP configuration"
+        verbose_name_plural = "SMTP configuration"
+
+    def __str__(self):
+        return f"{self.host}:{self.port} ({self.security})"

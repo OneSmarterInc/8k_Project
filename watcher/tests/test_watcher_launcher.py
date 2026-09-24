@@ -131,7 +131,10 @@ class WatcherLauncherTestCase(TestCase):
 
             # W-023: CREATE_NO_WINDOW (hidden console, inherited by the
             # venv's real python.exe) + CREATE_NEW_PROCESS_GROUP
-            # (independent of Django's Ctrl+C).
+            # (independent of Django's Ctrl+C). CREATE_NO_WINDOW and 
+            # DETACHED_PROCESS are mutually exclusive on Windows; the 
+            # launcher uses a hidden console in its own process group, 
+            # which still survives the parent.
             expected_flags = (
                 subprocess.CREATE_NO_WINDOW
                 | subprocess.CREATE_NEW_PROCESS_GROUP
