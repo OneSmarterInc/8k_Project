@@ -6,10 +6,11 @@ from watcher.models import (
     Filing,
     FilingSummaryCache,
 )
-from watcher.knowledge_base.ingestion.amendment_linker import (
-    AMBIGUOUS_AMENDMENT_TARGET,
-    candidate_originals as amendment_candidate_originals,
-)
+# 8-K/A DISABLED: amendment linking removed.
+# from watcher.knowledge_base.ingestion.amendment_linker import (
+#     AMBIGUOUS_AMENDMENT_TARGET,
+#     candidate_originals as amendment_candidate_originals,
+# )
 
 
 class AutomationRunSerializer(serializers.ModelSerializer):
@@ -42,14 +43,15 @@ class FilingSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    amends_accession = serializers.CharField(
-        source="amends.accession_number",
-        read_only=True,
-        allow_null=True,
-        default=None,
-    )
-
-    amended_by_accession = serializers.SerializerMethodField()
+    # 8-K/A DISABLED: amendment fields removed from the API.
+    # amends_accession = serializers.CharField(
+    #     source="amends.accession_number",
+    #     read_only=True,
+    #     allow_null=True,
+    #     default=None,
+    # )
+    #
+    # amended_by_accession = serializers.SerializerMethodField()
 
     summary = serializers.SerializerMethodField()
 
@@ -60,10 +62,10 @@ class FilingSerializer(serializers.ModelSerializer):
     failure_message = serializers.SerializerMethodField()
     failure_created_at = serializers.SerializerMethodField()
 
-    # W-022:
+    # W-022 (8-K/A DISABLED):
     # Candidate original 8-K filings presented to a reviewer when an
     # amendment cannot be linked automatically without guessing.
-    candidate_originals = serializers.SerializerMethodField()
+    # candidate_originals = serializers.SerializerMethodField()
 
     class Meta:
         model = Filing
@@ -86,26 +88,26 @@ class FilingSerializer(serializers.ModelSerializer):
             "created_at",
             "summary",
             "classification",
-            "amends_accession",
-            "amended_by_accession",
+            # "amends_accession",
+            # "amended_by_accession",
             "sec_item_codes",
             "item_codes_match",
             "flag",
             "flag_reason",
-            "candidate_originals",
+            # "candidate_originals",
             "failure_stage",
             "failure_code",
             "failure_message",
             "failure_created_at",
         ]
-
-    def get_amended_by_accession(self, obj):
-        # .all() reuses prefetch_related("amended_by") when the view
-        # provides it; otherwise it runs the same query as before.
-        return [
-            amendment.accession_number
-            for amendment in obj.amended_by.all()
-        ]
+    # 8-K/A DISABLED
+    # def get_amended_by_accession(self, obj):
+    #     # .all() reuses prefetch_related("amended_by") when the view
+    #     # provides it; otherwise it runs the same query as before.
+    #     return [
+    #         amendment.accession_number
+    #         for amendment in obj.amended_by.all()
+    #     ]
 
     def get_summary(self, obj):
         try:
@@ -192,53 +194,53 @@ class FilingSerializer(serializers.ModelSerializer):
             if failure
             else None
         )
+    # 8-K/A DISABLED
+    # def get_candidate_originals(self, obj):
+    #     """
+    #     W-022:
+    #     Only expose candidate originals when this filing is an unresolved,
+    #     explicitly flagged ambiguous 8-K/A amendment.
 
-    def get_candidate_originals(self, obj):
-        """
-        W-022:
-        Only expose candidate originals when this filing is an unresolved,
-        explicitly flagged ambiguous 8-K/A amendment.
+    #     The candidate query is shared with amendment_linker.py so the API
+    #     cannot drift away from the automatic matching policy.
+    #     """
 
-        The candidate query is shared with amendment_linker.py so the API
-        cannot drift away from the automatic matching policy.
-        """
+    #     if (
+    #         obj.form != "8-K/A"
+    #         or obj.amends_id is not None
+    #         or not obj.flag
+    #         or obj.flag_reason
+    #         != AMBIGUOUS_AMENDMENT_TARGET
+    #     ):
+    #         return []
 
-        if (
-            obj.form != "8-K/A"
-            or obj.amends_id is not None
-            or not obj.flag
-            or obj.flag_reason
-            != AMBIGUOUS_AMENDMENT_TARGET
-        ):
-            return []
+    #     candidates = (
+    #         amendment_candidate_originals(
+    #             obj
+    #         )
+    #     )
 
-        candidates = (
-            amendment_candidate_originals(
-                obj
-            )
-        )
-
-        return [
-            {
-                "id": candidate.id,
-                "accession_number": (
-                    candidate.accession_number
-                ),
-                "filing_date": (
-                    candidate.filing_date
-                ),
-                "report_date": (
-                    candidate.report_date
-                ),
-                "accepted_at": (
-                    candidate.accepted_at
-                ),
-                "source_url": (
-                    candidate.source_url
-                ),
-            }
-            for candidate in candidates
-        ]
+    #     return [
+    #         {
+    #             "id": candidate.id,
+    #             "accession_number": (
+    #                 candidate.accession_number
+    #             ),
+    #             "filing_date": (
+    #                 candidate.filing_date
+    #             ),
+    #             "report_date": (
+    #                 candidate.report_date
+    #             ),
+    #             "accepted_at": (
+    #                 candidate.accepted_at
+    #             ),
+    #             "source_url": (
+    #                 candidate.source_url
+    #             ),
+    #         }
+    #         for candidate in candidates
+    #     ]
 
         # ----------------------------------------------------------------------
 # W-034: strict validation for the SMTP settings form.

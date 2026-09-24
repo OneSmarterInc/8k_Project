@@ -27,7 +27,7 @@ class FilingDiscovery:
 
     SUPPORTED_FORMS = frozenset({
         "8-K",
-        "8-K/A",
+        # "8-K/A",  # 8-K/A DISABLED: amendments are no longer captured.
         "10-K",
         "10-Q",
     })
@@ -412,7 +412,7 @@ class FilingDiscovery:
                         filing_date.isoformat()
                     ),
 
-                                        # W-037: None (not "") when SEC gives no report date.
+                    # W-037: None (not "") when SEC gives no report date.
                     "report_date": (
                         report_date.isoformat() if report_date else None
                     ),

@@ -1,3 +1,8 @@
+# 8-K/A DISABLED: 8-K/A amendment handling was removed, so these tests are
+# skipped. The file is kept (not deleted) so it can be re-enabled by
+# removing the two lines below.
+import unittest
+raise unittest.SkipTest("8-K/A DISABLED: amendment handling removed")
 from django.test import TestCase
 
 from watcher.knowledge_base.ingestion.amendment_linker import (

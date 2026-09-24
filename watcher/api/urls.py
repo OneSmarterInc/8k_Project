@@ -5,7 +5,7 @@ from .views import (
     SMTPConfigView,
     ScheduleConfigView,
     filings,
-    resolve_amendment,
+    # resolve_amendment,  # 8-K/A DISABLED
     run_logs,
     runs,
     trigger_run,
@@ -25,11 +25,12 @@ urlpatterns = [
         filings,
         name="filings",
     ),
-    path(
-        "filings/<int:filing_id>/resolve-amendment/",
-        resolve_amendment,
-        name="resolve_amendment",
-    ),
+    # 8-K/A DISABLED: manual amendment resolution removed.
+    # path(
+    #     "filings/<int:filing_id>/resolve-amendment/",
+    #     resolve_amendment,
+    #     name="resolve_amendment",
+    # ),
     path(
         "runs/",
         runs,

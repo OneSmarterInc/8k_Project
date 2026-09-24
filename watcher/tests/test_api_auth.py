@@ -30,7 +30,7 @@ class ApiAuthenticationTests(TestCase):
             ("post", "/api/settings/smtp/?action=save"),
             ("get", "/api/settings/schedule/"),
             ("post", "/api/settings/schedule/"),
-            ("post", "/api/filings/1/resolve-amendment/"),
+          # ("post", "/api/filings/1/resolve-amendment/"),  # 8-K/A DISABLED
             ("post", "/api/knowledge-base/ask/"),
         ]
         for method, url in endpoints:

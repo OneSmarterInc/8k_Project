@@ -1,5 +1,5 @@
 """
-W-002: reconcile captured 8-K / 8-K/A filings against EDGAR's daily index.
+W-002: reconcile captured 8-K filings against EDGAR's daily index.
 
 Read-only: it fetches EDGAR's master daily index and compares it with the
 Filing table. It never modifies filings, runs, or any other data.
@@ -29,7 +29,9 @@ from django.core.management.base import BaseCommand, CommandError
 from watcher.models import Company, Filing
 from watcher.services.sec_client import SECClient
 
-RECONCILED_FORMS = ("8-K", "8-K/A")
+# 8-K/A DISABLED: amendments are no longer captured, so only 8-K is reconciled.
+# RECONCILED_FORMS = ("8-K", "8-K/A")
+RECONCILED_FORMS = ("8-K",)
 DAILY_INDEX_URL = (
     "https://www.sec.gov/Archives/edgar/daily-index/"
     "{year}/QTR{quarter}/master.{stamp}.idx"
@@ -96,7 +98,7 @@ def weekdays_ending(last_day, count):
 
 
 class Command(BaseCommand):
-    help = "Compare captured 8-K / 8-K/A filings with EDGAR's daily index (read-only)."
+    help = "Compare captured 8-K filings with EDGAR's daily index (read-only)."
 
     def add_arguments(self, parser):
         parser.add_argument(

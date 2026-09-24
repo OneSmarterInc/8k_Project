@@ -13,11 +13,12 @@ from watcher.knowledge_base.models import (
     FailureEvent,
     Filing,
 )
-from watcher.knowledge_base.ingestion.amendment_linker import (
-    AMBIGUOUS_AMENDMENT_TARGET,
-    link_amendment,
-    unresolved_ambiguous_amendments,
-)
+# 8-K/A DISABLED: amendment linking removed.
+# from watcher.knowledge_base.ingestion.amendment_linker import (
+#     AMBIGUOUS_AMENDMENT_TARGET,
+#     link_amendment,
+#     unresolved_ambiguous_amendments,
+# )
 from watcher.services.failure_tracking_service import (
     FailureTrackingService,
 )
@@ -446,57 +447,57 @@ class Command(BaseCommand):
                     f"{total_shards_parsed}"
                 )
 
-                # --------------------------------------------------
-                # W-027:
-                # Shared 8-K/A amendment reconciliation.
-                # --------------------------------------------------
+                # # --------------------------------------------------
+                # # W-027:
+                # # Shared 8-K/A amendment reconciliation.
+                # # --------------------------------------------------
 
-                unlinked_amendments = (
-                    Filing.objects.filter(
-                        form="8-K/A",
-                        amends__isnull=True,
-                    )
-                    .exclude(
-                        flag_reason=(
-                            AMBIGUOUS_AMENDMENT_TARGET
-                        )
-                    )
-                )
+                # unlinked_amendments = (
+                #     Filing.objects.filter(
+                #         form="8-K/A",
+                #         amends__isnull=True,
+                #     )
+                #     .exclude(
+                #         flag_reason=(
+                #             AMBIGUOUS_AMENDMENT_TARGET
+                #         )
+                #     )
+                # )
 
-                for amendment in (
-                    unlinked_amendments.iterator()
-                ):
-                    link_amendment(
-                        amendment
-                    )
+                # for amendment in (
+                #     unlinked_amendments.iterator()
+                # ):
+                #     link_amendment(
+                #         amendment
+                #     )
 
-                unlinked_count = (
-                    Filing.objects.filter(
-                        form="8-K/A",
-                        amends__isnull=True,
-                    )
-                    .count()
-                )
+                # unlinked_count = (
+                #     Filing.objects.filter(
+                #         form="8-K/A",
+                #         amends__isnull=True,
+                #     )
+                #     .count()
+                # )
 
-                self.stdout.write(
-                    f"Unlinked 8-K/A remaining: "
-                    f"{unlinked_count}"
-                )
+                # self.stdout.write(
+                #     f"Unlinked 8-K/A remaining: "
+                #     f"{unlinked_count}"
+                # )
 
-                # --------------------------------------------------
-                # W-022:
-                # Ambiguous amendment review count.
-                # --------------------------------------------------
+                # # --------------------------------------------------
+                # # W-022:
+                # # Ambiguous amendment review count.
+                # # --------------------------------------------------
 
-                ambiguous_count = (
-                    unresolved_ambiguous_amendments()
-                    .count()
-                )
+                # ambiguous_count = (
+                #     unresolved_ambiguous_amendments()
+                #     .count()
+                # )
 
-                self.stdout.write(
-                    f"Ambiguous 8-K/A requiring review: "
-                    f"{ambiguous_count}"
-                )
+                # self.stdout.write(
+                #     f"Ambiguous 8-K/A requiring review: "
+                #     f"{ambiguous_count}"
+                # )
 
                 # --------------------------------------------------
                 # Summary / email counts
@@ -571,19 +572,19 @@ class Command(BaseCommand):
                 # Normal AutomationRun finalization
                 # --------------------------------------------------
 
-                try:
-                    unlinked_count = (
-                        Filing.objects.filter(
-                            form="8-K/A",
-                            amends__isnull=True,
-                        )
-                        .count()
-                    )
+                # try:
+                #     unlinked_count = (
+                #         Filing.objects.filter(
+                #             form="8-K/A",
+                #             amends__isnull=True,
+                #         )
+                #         .count()
+                #     )
 
-                    ambiguous_count = (
-                        unresolved_ambiguous_amendments()
-                        .count()
-                    )
+                #     ambiguous_count = (
+                #         unresolved_ambiguous_amendments()
+                #         .count()
+                #     )
 
                     summary_count = (
                         FilingSummaryCache.objects.filter(

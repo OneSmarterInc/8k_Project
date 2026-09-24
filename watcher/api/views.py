@@ -25,10 +25,11 @@ from watcher.models import (
     SMTPConfig,
 )
 from watcher.knowledge_base.models import FailureEvent
-from watcher.knowledge_base.ingestion.amendment_linker import (
-    AMBIGUOUS_AMENDMENT_TARGET,
-    candidate_originals,
-)
+# 8-K/A DISABLED: amendment linking removed.
+# from watcher.knowledge_base.ingestion.amendment_linker import (
+#     AMBIGUOUS_AMENDMENT_TARGET,
+#     candidate_originals,
+# )
 from watcher.services.smtp_settings import (
     ALLOWED_SMTP_PORTS,
     get_smtp_settings,
@@ -196,9 +197,11 @@ def filings(request):
         Filing.objects
         # Performance only: load related rows in a few batched queries
         # instead of 3-4 queries per filing. Output is unchanged.
-        .select_related("company", "summary_cache", "amends")
+        # 8-K/A DISABLED: "amends" / "amended_by" no longer loaded.
+        # .select_related("company", "summary_cache", "amends")
+        .select_related("company", "summary_cache")
         .prefetch_related(
-            "amended_by",
+            # "amended_by",
             Prefetch(
                 "failure_events",
                 queryset=(
@@ -230,16 +233,17 @@ def filings(request):
         #
         # 1. filings with unresolved processing failures, and
         # 2. ambiguous 8-K/A filings requiring manual linking.
+        # 8-K/A DISABLED: the Review Queue now holds unresolved failures only.
         queryset = queryset.filter(
             unresolved_failure
-            | Q(
-                form="8-K/A",
-                amends__isnull=True,
-                flag=True,
-                flag_reason=(
-                    AMBIGUOUS_AMENDMENT_TARGET
-                ),
-            )
+            # | Q(
+            #     form="8-K/A",
+            #     amends__isnull=True,
+            #     flag=True,
+            #     flag_reason=(
+            #         AMBIGUOUS_AMENDMENT_TARGET
+            #     ),
+            # )
         ).distinct()
 
     elif status_param == "summarized":
@@ -294,117 +298,119 @@ def filings(request):
     return Response(serializer.data)
 
 
-@api_view(["POST"])
-@permission_classes([IsAdminUser])
-def resolve_amendment(request, filing_id):
-    """
-    W-022:
-    Allow an administrator to manually resolve an ambiguous
-    8-K/A amendment.
+# 8-K/A DISABLED: manual amendment resolution removed.
+# @api_view(["POST"])
+# @permission_classes([IsAdminUser])
+# 8-K/A DISABLED: manual amendment resolution removed.
+# def resolve_amendment(request, filing_id):
+#     """
+#     W-022:
+#     Allow an administrator to manually resolve an ambiguous
+#     8-K/A amendment.
 
-    The selected original filing must satisfy the same candidate
-    matching policy used by amendment_linker.py.
-    """
+#     The selected original filing must satisfy the same candidate
+#     matching policy used by amendment_linker.py.
+#     """
 
-    original_id = request.data.get(
-        "original_id"
-    )
+#     original_id = request.data.get(
+#         "original_id"
+#     )
 
-    try:
-        original_id = int(
-            original_id
-        )
+#     try:
+#         original_id = int(
+#             original_id
+#         )
 
-    except (TypeError, ValueError):
-        return Response(
-            {
-                "status": "error",
-                "message": (
-                    "original_id must be a valid "
-                    "filing ID."
-                ),
-            },
-            status=400,
-        )
+#     except (TypeError, ValueError):
+#         return Response(
+#             {
+#                 "status": "error",
+#                 "message": (
+#                     "original_id must be a valid "
+#                     "filing ID."
+#                 ),
+#             },
+#             status=400,
+#         )
 
-    with transaction.atomic():
-        amendment = get_object_or_404(
-            Filing.objects
-            .select_for_update()
-            .select_related("company"),
-            pk=filing_id,
-            form="8-K/A",
-        )
+#     with transaction.atomic():
+#         amendment = get_object_or_404(
+#             Filing.objects
+#             .select_for_update()
+#             .select_related("company"),
+#             pk=filing_id,
+#             form="8-K/A",
+#         )
 
-        # Never allow a second request to overwrite
-        # an already resolved amendment relationship.
-        if amendment.amends_id is not None:
-            return Response(
-                {
-                    "status": "error",
-                    "message": (
-                        "This amendment is already linked."
-                    ),
-                },
-                status=409,
-            )
+#         # Never allow a second request to overwrite
+#         # an already resolved amendment relationship.
+#         if amendment.amends_id is not None:
+#             return Response(
+#                 {
+#                     "status": "error",
+#                     "message": (
+#                         "This amendment is already linked."
+#                     ),
+#                 },
+#                 status=409,
+#             )
 
-        # Manual resolution is only valid for amendments
-        # explicitly marked as ambiguous.
-        if (
-            not amendment.flag
-            or amendment.flag_reason
-            != AMBIGUOUS_AMENDMENT_TARGET
-        ):
-            return Response(
-                {
-                    "status": "error",
-                    "message": (
-                        "This amendment is not awaiting "
-                        "ambiguous-target review."
-                    ),
-                },
-                status=409,
-            )
+#         # Manual resolution is only valid for amendments
+#         # explicitly marked as ambiguous.
+#         if (
+#             not amendment.flag
+#             or amendment.flag_reason
+#             != AMBIGUOUS_AMENDMENT_TARGET
+#         ):
+#             return Response(
+#                 {
+#                     "status": "error",
+#                     "message": (
+#                         "This amendment is not awaiting "
+#                         "ambiguous-target review."
+#                     ),
+#                 },
+#                 status=409,
+#             )
 
-        # candidate_originals() enforces:
-        #
-        # - same company
-        # - form == 8-K
-        # - same report_date
-        #
-        # This prevents a reviewer/API caller from linking
-        # an unrelated filing.
-        original = get_object_or_404(
-            candidate_originals(
-                amendment
-            ),
-            pk=original_id,
-        )
+#         # candidate_originals() enforces:
+#         #
+#         # - same company
+#         # - form == 8-K
+#         # - same report_date
+#         #
+#         # This prevents a reviewer/API caller from linking
+#         # an unrelated filing.
+#         original = get_object_or_404(
+#             candidate_originals(
+#                 amendment
+#             ),
+#             pk=original_id,
+#         )
 
-        amendment.amends = original
-        amendment.flag = False
-        amendment.flag_reason = ""
+#         amendment.amends = original
+#         amendment.flag = False
+#         amendment.flag_reason = ""
 
-        amendment.save(
-            update_fields=[
-                "amends",
-                "flag",
-                "flag_reason",
-                "updated_at",
-            ]
-        )
+#         amendment.save(
+#             update_fields=[
+#                 "amends",
+#                 "flag",
+#                 "flag_reason",
+#                 "updated_at",
+#             ]
+#         )
 
-    return Response(
-        {
-            "status": "linked",
-            "filing_id": amendment.id,
-            "original_id": original.id,
-            "amends": (
-                original.accession_number
-            ),
-        }
-    )
+#     return Response(
+#         {
+#             "status": "linked",
+#             "filing_id": amendment.id,
+#             "original_id": original.id,
+#             "amends": (
+#                 original.accession_number
+#             ),
+#         }
+#     )
 
 
 class SMTPConfigView(APIView):

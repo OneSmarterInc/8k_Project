@@ -45,7 +45,9 @@ class TickerProcessor:
         -> aggregate results
     """
 
-    FORMS = ("8-K", "8-K/A", "10-K", "10-Q")
+    # 8-K/A DISABLED: amendments are no longer captured.
+    # FORMS = ("8-K", "8-K/A", "10-K", "10-Q")
+    FORMS = ("8-K", "10-K", "10-Q")
 
     def __init__(
         self,

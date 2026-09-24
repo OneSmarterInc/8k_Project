@@ -1,3 +1,7 @@
+# 8-K/A DISABLED: amendment linking removed.
+# from watcher.knowledge_base.ingestion.amendment_linker import (
+#     link_amendment,
+# )
 from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
@@ -422,12 +426,13 @@ class FilingRegistrationService:
 
         # --------------------------------
         # 8-K/A amendment relationship
+        # 8-K/A DISABLED: amendment linking removed.
         # --------------------------------
 
-        if form == "8-K/A":
-            link_amendment(
-                filing
-            )
+        # if form == "8-K/A":
+        #     link_amendment(
+        #         filing
+        #     )
 
         # --------------------------------
         # Queue ingestion
