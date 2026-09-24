@@ -766,6 +766,19 @@ class ScheduleConfig(models.Model):
     
     is_active = models.BooleanField(default=False)
 
+    # ------------------------------------------------------------------
+    # W-037 (R-08 / R-09): intraday interval polling + nightly sweep.
+    #
+    # These fields are only read when frequency == "interval".
+    # Every pre-existing frequency (onetime / daily / weekly / monthly)
+    # ignores them completely, so adding them cannot change the behaviour
+    # of an existing ScheduleConfig row.
+    # ------------------------------------------------------------------
+    interval_minutes = models.PositiveIntegerField(default=20)
+    active_window_start = models.TimeField(null=True, blank=True)
+    active_window_end = models.TimeField(null=True, blank=True)
+    nightly_sweep = models.BooleanField(default=True)
+
     class Meta:
         verbose_name_plural = 'Schedule Config'
 class FailureEvent(models.Model):

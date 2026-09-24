@@ -55,6 +55,17 @@ class Command(BaseCommand):
             help="Disable sending the daily chronicle email.",
         )
 
+        parser.add_argument(
+            "--sweep",
+            action="store_true",
+            help=(
+                "W-037 / R-09: nightly catch-up pass. Discovery "
+                "already scans from January 1, so this is currently a "
+                "run marker only. It is the single seam where B-002's "
+                "_discovery_window should widen RECENT_WINDOW_DAYS."
+            ),
+        )
+
     def handle(self, *args, **options):
         """
         Run one SEC watcher execution.
@@ -87,6 +98,13 @@ class Command(BaseCommand):
 
         daily_chronicle = not bool(
             options.get("no_daily_chronicle")
+        )
+
+        # W-037:
+        # Read and logged only. Nothing downstream branches on it yet,
+        # so a sweep run behaves exactly like a normal run.
+        sweep = bool(
+            options.get("sweep")
         )
 
         # --------------------------------------------------
@@ -173,6 +191,15 @@ class Command(BaseCommand):
                     "ENABLED"
                     if auto_index
                     else "DISABLED"
+                )
+            )
+
+            self.stdout.write(
+                "Sweep mode: "
+                + (
+                    "ON (nightly catch-up)"
+                    if sweep
+                    else "OFF"
                 )
             )
 

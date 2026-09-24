@@ -39,6 +39,7 @@ class SubprocessWatcherLauncher:
         cls,
         force=False,
         daily_chronicle=True,
+        sweep=False,
     ):
         """
         Launch the watcher as an independent subprocess.
@@ -52,6 +53,11 @@ class SubprocessWatcherLauncher:
         - Prevents duplicate launches unless force=True.
         - Returns True when a launch is attempted.
         - Returns False when another watcher is already running.
+
+        W-037:
+        - `sweep` defaults to False, so the spawned command line is
+          byte-identical to the previous behaviour for every existing
+          caller. Only the nightly catch-up job passes sweep=True.
         """
 
         if not force and cls.is_running():
@@ -88,6 +94,14 @@ class SubprocessWatcherLauncher:
         if not daily_chronicle:
             cmd.append(
                 "--no-daily-chronicle"
+            )
+
+        # W-037:
+        # Nightly catch-up pass. Appended only when explicitly
+        # requested, so normal launches are unchanged.
+        if sweep:
+            cmd.append(
+                "--sweep"
             )
 
         # Each watcher launch starts a fresh log file.

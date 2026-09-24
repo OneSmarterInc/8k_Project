@@ -568,6 +568,20 @@ class ScheduleConfigView(APIView):
             "run_count": config.run_count,
             "run_times": config.run_times,
             "is_active": config.is_active,
+
+            # W-037
+            "interval_minutes": config.interval_minutes,
+            "active_window_start": (
+                config.active_window_start.strftime("%H:%M")
+                if config.active_window_start
+                else None
+            ),
+            "active_window_end": (
+                config.active_window_end.strftime("%H:%M")
+                if config.active_window_end
+                else None
+            ),
+            "nightly_sweep": config.nightly_sweep,
         })
 
     def post(self, request):
@@ -671,6 +685,61 @@ class ScheduleConfigView(APIView):
             "run_times",
             [],
         )
+
+        # ----------------------------------------------------------
+        # W-037
+        #
+        # These four fall back to the STORED value, not to a constant.
+        # Schedule.jsx posts the whole config from two places, and an
+        # older frontend build will omit these keys. A hardcoded
+        # fallback would silently reset the interval settings every
+        # time the automation toggle is flipped.
+        # ----------------------------------------------------------
+        try:
+            config.interval_minutes = int(
+                data.get(
+                    "interval_minutes",
+                    config.interval_minutes or 20,
+                )
+            )
+        except (TypeError, ValueError):
+            config.interval_minutes = (
+                config.interval_minutes or 20
+            )
+
+        config.nightly_sweep = bool(
+            data.get(
+                "nightly_sweep",
+                config.nightly_sweep if config.pk else True,
+            )
+        )
+
+        for window_field in (
+            "active_window_start",
+            "active_window_end",
+        ):
+            if window_field in data:
+                import datetime
+
+                raw_window = data.get(window_field)
+
+                try:
+                    setattr(
+                        config,
+                        window_field,
+                        (
+                            datetime.datetime.strptime(
+                                raw_window,
+                                "%H:%M",
+                            ).time()
+                            if raw_window
+                            else None
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    # Malformed time leaves the stored value intact
+                    # rather than blanking the window.
+                    pass
 
         new_is_active = data.get(
             "is_active",

@@ -7,7 +7,10 @@ from django_apscheduler.jobstores import DjangoJobStore
 from django.db import connection
 from django.forms.models import model_to_dict
 from watcher.models import ScheduleConfig
-from watcher.services.schedule_manager import build_triggers_for_config
+from watcher.services.schedule_manager import (
+    build_jobs_for_config,
+    build_triggers_for_config,
+)
 from watcher.services.watcher_launcher import SubprocessWatcherLauncher
 
 try:
@@ -22,13 +25,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def my_job():
+def my_job(sweep=False):
     """
     The actual task that runs when a schedule hits.
     Spawns the SEC watcher asynchronously so APScheduler threads are never blocked.
+
+    W-037: `sweep` defaults to False so jobs already persisted in the
+    DjangoJobStore with no kwargs keep loading and calling correctly.
     """
-    logger.info("Scheduler triggered! Invoking WatcherLauncher...")
-    SubprocessWatcherLauncher.launch()
+    logger.info(
+        "Scheduler triggered (sweep=%s)! Invoking WatcherLauncher...",
+        sweep,
+    )
+    SubprocessWatcherLauncher.launch(sweep=sweep)
 
 
 class Command(BaseCommand):
@@ -70,18 +79,45 @@ class Command(BaseCommand):
                     
             config = ScheduleConfig.objects.first()
             if config and config.is_active:
-                triggers = build_triggers_for_config(config)
-                for i, trigger in enumerate(triggers):
+                # W-037: build_jobs_for_config returns (trigger, kwargs)
+                # pairs. For every pre-existing frequency the kwargs are
+                # empty and the trigger list is unchanged.
+                jobs = build_jobs_for_config(config)
+
+                is_interval = (
+                    str(config.frequency or "").lower() == "interval"
+                )
+
+                for i, (trigger, job_kwargs) in enumerate(jobs):
+                    is_sweep = bool(job_kwargs.get("sweep"))
+
+                    # A 1-hour grace is right for a once-a-day schedule
+                    # and for the nightly sweep. It is wrong for a
+                    # 20-minute poll, where a run delayed 55 minutes
+                    # should simply be dropped in favour of the next
+                    # scheduled poll. Keyed off the frequency, NOT off
+                    # the sweep flag, so daily/weekly/monthly keep the
+                    # original 3600.
+                    if is_interval and not is_sweep:
+                        grace = 1200
+                    else:
+                        grace = 3600
+
                     scheduler.add_job(
                         my_job,
                         trigger=trigger,
+                        kwargs=job_kwargs or None,
+                        # Prefix preserved: load_jobs only removes ids
+                        # starting with "watcher_job_", so the sweep job
+                        # is cleaned up when automation is switched off
+                        # instead of orphaning in the jobstore.
                         id=f"watcher_job_{i}",
                         max_instances=1,
                         coalesce=True,
-                        misfire_grace_time=3600, # 1 hour grace time to prevent stale bursts
+                        misfire_grace_time=grace,
                         replace_existing=True,
                     )
-                self.stdout.write(self.style.SUCCESS(f"Loaded {len(triggers)} scheduled triggers."))
+                self.stdout.write(self.style.SUCCESS(f"Loaded {len(jobs)} scheduled triggers."))
             else:
                 self.stdout.write(self.style.WARNING("Automation disabled or config empty. Watcher jobs removed."))
             return config
