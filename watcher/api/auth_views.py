@@ -17,6 +17,7 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from watcher.api.authentication import get_valid_token
 
 from .throttles import LoginIPRateThrottle, LoginUsernameRateThrottle
 
@@ -54,7 +55,8 @@ def login(request):
             status=400,
         )
 
-    token, _ = Token.objects.get_or_create(user=user)
+    # Security review #3: reuse a still-valid token, replace an expired one.
+    token = get_valid_token(user)
 
     return Response({"token": token.key, **_user_payload(user)})
 
