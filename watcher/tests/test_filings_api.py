@@ -59,10 +59,18 @@ class FilingsApiW035Tests(TestCase):
             message="test failure",
         )
 
-    def _ids(self, params=None):
+    def _rows(self, params=None):
+        """
+        W-040: the endpoint now always returns the paginated envelope
+        {count, next, previous, results}. This helper reads "results"
+        so the filter assertions below are unchanged in meaning.
+        """
         response = self.client.get(reverse("filings"), params or {})
         self.assertEqual(response.status_code, 200)
-        return {row["id"] for row in response.json()}
+        return response.json()["results"]
+
+    def _ids(self, params=None):
+        return {row["id"] for row in self._rows(params)}
 
     def test_default_includes_unsummarized_and_excludes_failed(self):
         ids = self._ids()
@@ -83,11 +91,47 @@ class FilingsApiW035Tests(TestCase):
             {self.summarized.id, self.unsummarized.id, self.failed.id},
         )
 
-    def test_default_response_is_still_a_plain_list(self):
-        response = self.client.get(reverse("filings"))
-        self.assertIsInstance(response.json(), list)
+    def test_default_response_is_paginated(self):
+        """
+        W-040: this used to assert a plain list. The default response is
+        now bounded, because an unbounded one would serialize tens of
+        thousands of rows at 1,500 tickers.
+        """
+        data = self.client.get(reverse("filings")).json()
 
-    def test_pagination_is_opt_in(self):
+        self.assertIsInstance(data, dict)
+        for key in ("count", "next", "previous", "results"):
+            self.assertIn(key, data)
+
+        self.assertIsInstance(data["results"], list)
+
+    def test_default_count_is_the_full_total_not_the_page_length(self):
+        # The Sidebar badge reads "count", so it must be the total.
+        data = self.client.get(
+            reverse("filings"), {"status": "all", "page_size": 1}
+        ).json()
+
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(len(data["results"]), 1)
+
+    def test_page_size_above_max_is_capped(self):
+        response = self.client.get(
+            reverse("filings"), {"status": "all", "page_size": 10000}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(response.json()["results"]), 500)
+
+    def test_next_is_null_on_the_last_page(self):
+        data = self.client.get(
+            reverse("filings"), {"status": "all"}
+        ).json()
+
+        # Only 3 fixtures, well under page_size 100.
+        self.assertIsNone(data["next"])
+        self.assertEqual(len(data["results"]), 3)
+
+    def test_explicit_page_size_returns_one_page(self):
         response = self.client.get(
             reverse("filings"), {"status": "all", "page_size": 1}
         )

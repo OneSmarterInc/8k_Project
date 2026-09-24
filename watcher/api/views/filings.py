@@ -142,21 +142,24 @@ def filings(request):
             form=form
         )
 
-    # W-035: paginate only when explicitly requested.
-    if "page" in request.GET or "page_size" in request.GET:
-        paginator = FilingPagination()
-        page = paginator.paginate_queryset(queryset, request)
+    # W-040: pagination is now the DEFAULT, not opt-in.
+    #
+    # The response was previously unbounded: at 1,500 tickers this
+    # endpoint would serialize tens of thousands of rows into a single
+    # response. Every response is now capped at page_size rows.
+    #
+    # Callers are unaffected:
+    #   - filingService.normalizeFilingResponse already reads both the
+    #     bare-list and the {count,next,previous,results} shapes (FE-003).
+    #   - callers that want the whole set (Dashboard, Review Queue) let
+    #     getFilings follow "next" for them.
+    #   - ?page= / ?page_size= keep working exactly as before.
+    paginator = FilingPagination()
+    page = paginator.paginate_queryset(queryset, request)
 
-        return paginator.get_paginated_response(
-            FilingSerializer(page, many=True).data
-        )
-
-    serializer = FilingSerializer(
-        queryset,
-        many=True,
+    return paginator.get_paginated_response(
+        FilingSerializer(page, many=True).data
     )
-
-    return Response(serializer.data)
 
 
 # 8-K/A DISABLED: manual amendment resolution removed.
