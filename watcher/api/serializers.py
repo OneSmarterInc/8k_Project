@@ -77,6 +77,9 @@ class FilingSerializer(serializers.ModelSerializer):
             "filing_date",
             "report_date",
             "accepted_at",
+            "entry_session",
+            "entry_rule",
+            "parsed_item_codes",
             "primary_document",
             "source_url",
             "ingestion_status",
@@ -97,12 +100,12 @@ class FilingSerializer(serializers.ModelSerializer):
         ]
 
     def get_amended_by_accession(self, obj):
-        return list(
-            obj.amended_by.values_list(
-                "accession_number",
-                flat=True,
-            )
-        )
+        # .all() reuses prefetch_related("amended_by") when the view
+        # provides it; otherwise it runs the same query as before.
+        return [
+            amendment.accession_number
+            for amendment in obj.amended_by.all()
+        ]
 
     def get_summary(self, obj):
         try:
@@ -120,6 +123,19 @@ class FilingSerializer(serializers.ModelSerializer):
             obj,
             "_active_failure",
         ):
+            # Reuse the batched prefetch from the filings list view.
+            prefetched = getattr(
+                obj,
+                "prefetched_unresolved_failures",
+                None,
+            )
+
+            if prefetched is not None:
+                obj._active_failure = (
+                    prefetched[0] if prefetched else None
+                )
+                return obj._active_failure
+
             obj._active_failure = (
                 obj.failure_events
                 .filter(

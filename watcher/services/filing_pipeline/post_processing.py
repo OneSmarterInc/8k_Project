@@ -219,6 +219,8 @@ class FilingPostProcessingService:
         # -------------------------
         # EMAIL
         # -------------------------
+        email_attempted = False
+
         try:
 
             FailureTrackingService.resolve(
@@ -236,6 +238,8 @@ class FilingPostProcessingService:
                 )
 
             elif self.daily_chronicle:
+
+                email_attempted = True
 
                 email_sent = (
                     self.email_service.send(
@@ -305,7 +309,7 @@ class FilingPostProcessingService:
                     recipient,
                 )
 
-        else:
+        elif email_attempted:
 
             self.output.status(
                 "EMAIL",
