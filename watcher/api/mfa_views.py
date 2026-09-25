@@ -6,6 +6,10 @@ is something a signed-in user does to their own account; it is never
 part of the login flow.
 """
 
+import io
+
+import segno
+
 from django.contrib.auth import authenticate
 
 from rest_framework.decorators import (
@@ -65,7 +69,43 @@ def mfa_setup(request):
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=400)
 
-    return Response({"provisioning_uri": uri})
+    # The QR is rendered server-side as inline SVG so the frontend
+    # needs no extra npm package, and so the secret never has to be
+    # parsed out of the URI by client code. The URI is returned too,
+    # for the "enter it manually" fallback when a camera is unavailable.
+    buffer = io.BytesIO()
+
+    segno.make(uri, error="m").save(
+        buffer,
+        kind="svg",
+        scale=5,
+        border=2,
+        dark="#0b0f14",
+        light="#ffffff",
+        # xmldecl=False because the markup is embedded INLINE in the
+        # page - an <?xml ...?> declaration is not valid inside HTML.
+        xmldecl=False,
+        svgns=True,
+        nl=False,
+    )
+
+    return Response({
+        "provisioning_uri": uri,
+        "qr_svg": buffer.getvalue().decode("utf-8"),
+        "manual_key": _device_secret_for_display(_device),
+    })
+
+
+def _device_secret_for_display(device):
+    """
+    The base32 secret, grouped in fours, for manual entry.
+
+    Only ever returned during an UNCONFIRMED enrolment the user just
+    started themselves - never for a confirmed device.
+    """
+    raw = device.secret
+
+    return " ".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
 @api_view(["POST"])

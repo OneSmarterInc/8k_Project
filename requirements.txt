@@ -26,3 +26,5 @@ waitress==3.0.2
 # redis>=5.0
 # MFA-01: TOTP second factor
 pyotp>=2.9.0
+# MFA-01: server-side QR rendering for enrolment
+segno>=1.6.0
