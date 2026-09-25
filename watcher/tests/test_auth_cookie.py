@@ -151,3 +151,123 @@ class AuthCookieTests(TestCase):
 
     def test_no_cookie_and_no_header_is_rejected(self):
         self.assertEqual(APIClient().get(ME_URL).status_code, 401)
+
+class StaleCookieFallbackTests(TestCase):
+    """
+    P-06: a stale cookie must not block a valid Authorization header.
+
+    Before the fix the cookie branch returned unconditionally, so
+    authenticate_credentials raised and the header was never consulted
+    - even when it carried a perfectly good token.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="stale-user",
+            password="pw-stale-user-123",
+        )
+
+    def fresh_token(self):
+        Token.objects.filter(user=self.user).delete()
+        return Token.objects.create(user=self.user)
+
+    def expire(self, token):
+        token.created = timezone.now() - timedelta(
+            hours=settings.TOKEN_TTL_HOURS + 1
+        )
+        token.save(update_fields=["created"])
+
+    # ------------------------------------------------------------------
+    # The fix
+    # ------------------------------------------------------------------
+
+    def test_valid_header_wins_when_the_cookie_is_expired(self):
+        # Token is one-per-user, so the two credentials belong to two
+        # users: a browser holding an expired cookie for one account
+        # while a script sends a valid header token for another. The
+        # header must win rather than the request 401-ing.
+        expired = self.fresh_token()
+        self.expire(expired)
+
+        other = get_user_model().objects.create_user(
+            username="header-user",
+            password="pw-header-user-123",
+        )
+        valid = Token.objects.create(user=other)
+
+        client = APIClient()
+        client.cookies[COOKIE] = expired.key
+        client.credentials(HTTP_AUTHORIZATION=f"Token {valid.key}")
+
+        response = client.get(ME_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["username"], "header-user")
+
+    def test_valid_header_wins_when_the_cookie_is_garbage(self):
+        valid = self.fresh_token()
+
+        client = APIClient()
+        client.cookies[COOKIE] = "not-a-real-token-at-all"
+        client.credentials(HTTP_AUTHORIZATION=f"Token {valid.key}")
+
+        self.assertEqual(client.get(ME_URL).status_code, 200)
+
+    def test_valid_header_wins_when_the_cookie_was_revoked(self):
+        # The realistic rotation case: the cookie holds the OLD key,
+        # the header holds the replacement issued for the same user.
+        revoked = self.fresh_token()
+        key = revoked.key
+        revoked.delete()
+
+        valid = Token.objects.create(user=self.user)
+
+        client = APIClient()
+        client.cookies[COOKIE] = key
+        client.credentials(HTTP_AUTHORIZATION=f"Token {valid.key}")
+
+        self.assertEqual(client.get(ME_URL).status_code, 200)
+
+    # ------------------------------------------------------------------
+    # The fix must NOT weaken anything
+    # ------------------------------------------------------------------
+
+    def test_expired_cookie_alone_still_returns_401(self):
+        # Falling through must not become "let anyone in".
+        expired = self.fresh_token()
+        self.expire(expired)
+
+        client = APIClient()
+        client.cookies[COOKIE] = expired.key
+
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_garbage_cookie_alone_still_returns_401(self):
+        client = APIClient()
+        client.cookies[COOKIE] = "not-a-real-token-at-all"
+
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_stale_cookie_with_a_stale_header_still_returns_401(self):
+        expired = self.fresh_token()
+        self.expire(expired)
+
+        client = APIClient()
+        client.cookies[COOKIE] = expired.key
+        client.credentials(HTTP_AUTHORIZATION="Token also-not-real")
+
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_a_valid_cookie_is_still_preferred(self):
+        # The happy path must be untouched: a good cookie authenticates
+        # with no header present at all.
+        valid = self.fresh_token()
+
+        client = APIClient()
+        client.cookies[COOKIE] = valid.key
+
+        self.assertEqual(client.get(ME_URL).status_code, 200)

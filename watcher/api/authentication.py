@@ -87,7 +87,24 @@ class ExpiringTokenAuthentication(TokenAuthentication):
         key = request.COOKIES.get(auth_cookie_name())
 
         if key:
-            return self.authenticate_credentials(key)
+            try:
+                return self.authenticate_credentials(key)
+
+            except AuthenticationFailed:
+                # P-06: the cookie is stale, revoked or expired.
+                #
+                # Falling through rather than raising matters: the
+                # request may ALSO carry a valid Authorization header,
+                # and 401-ing it would defeat the exact reason the
+                # header fallback exists - a browser that logged in
+                # before a token rotation, or a script running on the
+                # same domain as a logged-in session.
+                #
+                # Only AuthenticationFailed is caught. Anything else
+                # (a database error, a bug) still propagates, so a real
+                # failure is never silently turned into an anonymous
+                # request.
+                pass
 
         return super().authenticate(request)
 
