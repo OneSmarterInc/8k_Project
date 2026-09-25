@@ -30,7 +30,10 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.utils import timezone
 
+import io
+
 import pyotp
+import segno
 
 from watcher.models import BackupCode, TOTPDevice
 
@@ -231,3 +234,35 @@ def disable(user):
     """
     TOTPDevice.objects.filter(user=user).delete()
     BackupCode.objects.filter(user=user).delete()
+
+
+def render_qr_svg(uri):
+    """
+    Inline-safe SVG for the provisioning URI.
+
+    xmldecl=False and nl=False because the markup is embedded directly
+    in the page: an <?xml ...?> declaration is invalid inside HTML, and
+    raw newlines break the JSON response.
+    """
+    buffer = io.BytesIO()
+
+    segno.make(uri, error="m").save(
+        buffer,
+        kind="svg",
+        scale=5,
+        border=2,
+        dark="#0b0f14",
+        light="#ffffff",
+        xmldecl=False,
+        svgns=True,
+        nl=False,
+    )
+
+    return buffer.getvalue().decode("utf-8")
+
+
+def grouped_secret(device):
+    """The base32 secret in groups of four, for manual entry."""
+    raw = device.secret
+
+    return " ".join(raw[i:i + 4] for i in range(0, len(raw), 4))

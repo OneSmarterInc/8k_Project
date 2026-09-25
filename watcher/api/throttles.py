@@ -61,3 +61,25 @@ class MFAVerifyRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": handle[-32:],
         }
+
+
+class MFAEnrolRateThrottle(SimpleRateThrottle):
+    """
+    MFA-02: limit enrolment attempts during a forced first login.
+
+    Keyed on the sign-in handle, like MFAVerifyRateThrottle, so a
+    failed scan does not lock a different user out.
+    """
+
+    scope = "mfa_enrol"
+
+    def get_cache_key(self, request, view):
+        handle = request.data.get("mfa_token") or ""
+
+        if not handle:
+            return None
+
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": handle[-32:],
+        }

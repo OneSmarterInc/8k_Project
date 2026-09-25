@@ -6,6 +6,7 @@ GET  /api/auth/me/      -> {username, is_staff}
 POST /api/auth/logout/  -> deletes the caller's token
 """
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.core import signing
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -28,11 +29,16 @@ from watcher.api.authentication import (
 from .throttles import (
     LoginIPRateThrottle,
     LoginUsernameRateThrottle,
+    MFAEnrolRateThrottle,
     MFAVerifyRateThrottle,
 )
 from watcher.services.totp_service import (
+    confirm_enrolment,
+    grouped_secret,
+    render_qr_svg,
     consume_backup_code,
     has_confirmed_device,
+    start_enrolment,
     verify_code,
 )
 
@@ -43,6 +49,49 @@ from watcher.services.totp_service import (
 # enough to open an authenticator app.
 MFA_SALT = "watcher.mfa.login"
 MFA_TOKEN_MAX_AGE = 300
+
+
+def _mfa_handle(user):
+    return signing.TimestampSigner(salt=MFA_SALT).sign(str(user.pk))
+
+
+def _user_from_handle(handle):
+    """
+    Resolve a login handle back to a user.
+
+    Returns None for a tampered, expired or unknown handle. The handle
+    is the ONLY proof the password was correct, which is what lets the
+    enrolment endpoints below be AllowAny without being open.
+    """
+    try:
+        pk = signing.TimestampSigner(salt=MFA_SALT).unsign(
+            handle or "",
+            max_age=MFA_TOKEN_MAX_AGE,
+        )
+    except signing.BadSignature:
+        return None
+
+    user = get_user_model().objects.filter(pk=pk).first()
+
+    return user if (user and user.is_active) else None
+
+
+def _enrolment_is_required(user):
+    """
+    MFA-02: must this user register an authenticator before proceeding?
+
+    False unless MFA_REQUIRED is on, so with the flag off this whole
+    path is unreachable and login is unchanged.
+    """
+    if not getattr(settings, "MFA_REQUIRED", False):
+        return False
+
+    exempt = getattr(settings, "MFA_REQUIRED_EXEMPT_USERS", []) or []
+
+    if user.get_username() in exempt:
+        return False
+
+    return not has_confirmed_device(user)
 
 
 def _user_payload(user):
@@ -87,9 +136,16 @@ def login(request):
     if has_confirmed_device(user):
         return Response({
             "mfa_required": True,
-            "mfa_token": signing.TimestampSigner(
-                salt=MFA_SALT,
-            ).sign(str(user.pk)),
+            "mfa_token": _mfa_handle(user),
+        })
+
+    # MFA-02: no authenticator yet, and the deployment insists on one.
+    # Same shape as above - no token, no cookie, just a signed handle -
+    # so the browser can show the QR without holding a session.
+    if _enrolment_is_required(user):
+        return Response({
+            "enrolment_required": True,
+            "mfa_token": _mfa_handle(user),
         })
 
     # Security review #3: reuse a still-valid token, replace an expired one.
@@ -191,5 +247,88 @@ def login_verify(request):
     token = get_valid_token(user)
 
     response = Response({"token": token.key, **_user_payload(user)})
+
+    return set_auth_cookie(response, token)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginIPRateThrottle, MFAEnrolRateThrottle])
+def login_enrol(request):
+    """
+    POST /api/auth/login/enrol/  {mfa_token}
+
+    MFA-02: hand back the QR during a forced first login.
+
+    AllowAny, but not open: mfa_token is a signed handle that only
+    /api/auth/login/ issues, and only after the password was accepted.
+    Without it this returns 400.
+
+    Refuses outright if the user already has a confirmed device, so it
+    cannot be used to re-enrol over a working authenticator.
+    """
+    user = _user_from_handle(request.data.get("mfa_token"))
+
+    if user is None:
+        return Response(
+            {"detail": "That took too long. Please sign in again."},
+            status=400,
+        )
+
+    if has_confirmed_device(user):
+        return Response(
+            {"detail": "An authenticator is already registered."},
+            status=400,
+        )
+
+    try:
+        device, uri = start_enrolment(user)
+
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+
+    return Response({
+        "provisioning_uri": uri,
+        "qr_svg": render_qr_svg(uri),
+        "manual_key": grouped_secret(device),
+    })
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginIPRateThrottle, MFAEnrolRateThrottle])
+def login_enrol_confirm(request):
+    """
+    POST /api/auth/login/enrol/confirm/  {mfa_token, code}
+
+    MFA-02: activate the device and complete the sign-in in one step.
+
+    The session is issued ONLY after the code proves the user really
+    scanned the QR, so an abandoned enrolment leaves them with no
+    device and no session - never locked out.
+
+    Backup codes come back in this response and are shown once.
+    """
+    user = _user_from_handle(request.data.get("mfa_token"))
+
+    if user is None:
+        return Response(
+            {"detail": "That took too long. Please sign in again."},
+            status=400,
+        )
+
+    try:
+        backup_codes = confirm_enrolment(user, request.data.get("code"))
+
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+
+    token = get_valid_token(user)
+
+    response = Response({
+        "token": token.key,
+        "backup_codes": backup_codes,
+        **_user_payload(user),
+    })
 
     return set_auth_cookie(response, token)

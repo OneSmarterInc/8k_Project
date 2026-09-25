@@ -593,6 +593,30 @@ AUTH_COOKIE_NAME = _env_str("AUTH_COOKIE_NAME", "watcher_auth")
 AUTH_COOKIE_SAMESITE = _env_str("AUTH_COOKIE_SAMESITE", "Lax")
 AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
 
+# ---------------------------------------------------------------------
+# MFA-02: force every user to register an authenticator.
+#
+# OFF by default. With it off, login behaves exactly as it does today
+# and nobody is prompted for anything.
+#
+# With it ON, a user who has no confirmed authenticator gets the QR on
+# the login screen itself and cannot reach the app until they have
+# scanned it and entered a code. From then on they are asked for a
+# code at every sign-in.
+#
+# THE FAILURE MODE IS TOTAL. If this misbehaves nobody can log in,
+# including you, and there is no UI path back - it would have to be
+# fixed from the Django shell. Two things exist because of that:
+#
+#   - Removing MFA_REQUIRED from .env restores normal login instantly.
+#   - MFA_REQUIRED_EXEMPT_USERS keeps one break-glass account working.
+#     Comma separated usernames. Use it while testing, and consider
+#     keeping one permanently.
+# ---------------------------------------------------------------------
+
+MFA_REQUIRED = _env_bool("MFA_REQUIRED", False)
+MFA_REQUIRED_EXEMPT_USERS = _env_list("MFA_REQUIRED_EXEMPT_USERS", "")
+
 # P-05: enforce CSRF on cookie-authenticated unsafe methods.
 #
 # DRF's TokenAuthentication skips CSRF because a header token cannot be
@@ -669,6 +693,8 @@ REST_FRAMEWORK = {
         "login_user": _env_str("LOGIN_RATE_USER", "5/minute"),
         # MFA-01: second-factor attempts per sign-in handle.
         "mfa_verify": _env_str("MFA_VERIFY_RATE", "5/minute"),
+        # MFA-02: enrolment attempts during a forced first login.
+        "mfa_enrol": _env_str("MFA_ENROL_RATE", "10/minute"),
     },
 }
 

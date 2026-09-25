@@ -27,6 +27,20 @@ urlpatterns = [
         auth_views.login_verify,
         name="auth_login_verify",
     ),
+
+    # MFA-02: forced first-time enrolment, before any session exists.
+    # Declared BEFORE nothing else matches these paths, so order is
+    # not load-bearing here, but they must stay above any catch-all.
+    path(
+        "auth/login/enrol/",
+        auth_views.login_enrol,
+        name="auth_login_enrol",
+    ),
+    path(
+        "auth/login/enrol/confirm/",
+        auth_views.login_enrol_confirm,
+        name="auth_login_enrol_confirm",
+    ),
     path("auth/me/", auth_views.me, name="auth_me"),
     path("auth/logout/", auth_views.logout, name="auth_logout"),
 
