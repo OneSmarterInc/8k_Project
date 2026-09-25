@@ -112,3 +112,97 @@ class ReconcileCommandTests(TestCase):
         before = filing.__class__.objects.count()
         self._run()
         self.assertEqual(filing.__class__.objects.count(), before)
+
+    
+
+class ReconcileHolidayVsOutageTests(TestCase):
+    """
+    I-02: a missing daily index is classified with the NYSE calendar.
+
+    2025-11-27 = Thanksgiving (market closed)
+    2025-11-28 = day after Thanksgiving (half day, market open)
+    """
+
+    def _register(self, ticker, cik, accession, filing_date):
+        return FilingRegistrationService().register(
+            ticker=ticker,
+            cik=cik,
+            company_name=ticker,
+            form="8-K",
+            accession_number=accession,
+            sequence=1,
+            filing_date=filing_date,
+            primary_document="d.htm",
+            local_path="/tmp/d",
+            source_url="http://test/d",
+            report_date=filing_date,
+        )
+
+    def _run(self, last_day, responses, days=1):
+        """responses: list of (status_code, text), one per visited day."""
+        out = StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "watcher.management.commands.reconcile_daily_index.SECClient"
+        ) as client_cls:
+            client_cls.return_value.get.side_effect = [
+                MagicMock(status_code=code, text=text) for code, text in responses
+            ]
+            call_command(
+                "reconcile_daily_index",
+                "--date", last_day,
+                "--days", str(days),
+                "--out-dir", tmp,
+                stdout=out,
+            )
+            summary_file = next(Path(tmp).glob("reconciliation_*.csv"))
+            summary = list(csv.DictReader(summary_file.open()))
+        return out.getvalue(), summary
+
+    def setUp(self):
+        # At least one company so the command has a universe.
+        self._register("ALPHA", "1111111111", "0001111111-26-000001", "2025-11-28")
+
+    def test_missing_index_on_a_trading_day_is_a_failure(self):
+        out, summary = self._run("2025-11-28", [(404, "")])
+        self.assertEqual(summary[0]["day_type"], "TRADING")
+        self.assertTrue(summary[0]["result"].startswith("FAIL"))
+        self.assertIn("days failed (no index on a trading day) 1", out)
+
+    def test_missing_index_on_a_market_holiday_is_expected(self):
+        out, summary = self._run("2025-11-27", [(404, "")])
+        self.assertEqual(summary[0]["day_type"], "MARKET HOLIDAY")
+        self.assertEqual(summary[0]["result"], "NO INDEX (market holiday)")
+        self.assertNotIn("FAIL", summary[0]["result"])
+        self.assertIn("days skipped as market holidays 1", out)
+
+    def test_index_present_on_a_market_holiday_is_reconciled(self):
+        self._register("BETA", "2222222222", "0002222222-26-000009", "2025-11-27")
+        index = (
+            "Description: Daily Index\n"
+            "CIK|Company Name|Form Type|Date Filed|File Name\n"
+            "--------------------------------------------------------------------------------\n"
+            "2222222222|BETA CORP|8-K|20251127|edgar/data/2222222222/0002222222-26-000009.txt\n"
+        )
+        out, summary = self._run("2025-11-27", [(200, index)])
+        self.assertEqual(summary[0]["day_type"], "MARKET HOLIDAY")
+        self.assertEqual(summary[0]["edgar_index"], "OK")
+        self.assertEqual(summary[0]["result"], "MATCH")
+        self.assertIn("days reconciled 1", out)
+
+    def test_totals_line_over_a_holiday_week(self):
+        # Wed 26 (index), Thu 27 holiday (none), Fri 28 half day (none).
+        index = (
+            "--------------------------------------------------------------------------------\n"
+        )
+        out, summary = self._run(
+            "2025-11-28", [(200, index), (404, ""), (404, "")], days=3
+        )
+        self.assertEqual(
+            [row["day_type"] for row in summary],
+            ["TRADING", "MARKET HOLIDAY", "TRADING"],
+        )
+    
+    def test_weekend_days_are_never_visited(self):
+        # Mon 2025-12-01 with --days 2 visits Fri 28 and Mon 1, not Sat/Sun.
+        out, summary = self._run("2025-12-01", [(404, ""), (404, "")], days=2)
+        self.assertEqual([row["date"] for row in summary], ["2025-11-28", "2025-12-01"])

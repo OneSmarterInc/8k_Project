@@ -16,6 +16,13 @@ Output:
 
 EDGAR publishes each daily index after the close (usually late evening ET),
 so run this the next morning.
+I-02: a missing daily index is classified with the NYSE calendar:
+    trading day, no index     -> FAIL (EDGAR outage, or run before the
+                                 index was published): investigate
+    market holiday, no index  -> NO INDEX (market holiday): expected
+    market holiday, index     -> reconciled normally (EDGAR sometimes
+                                 disseminates on market holidays)
+Weekdays are still the days visited; only the classification changed.
 """
 
 import csv
@@ -23,6 +30,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pandas_market_calendars as mcal
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
@@ -37,6 +45,27 @@ DAILY_INDEX_URL = (
     "{year}/QTR{quarter}/master.{stamp}.idx"
 )
 MARKET_TZ = ZoneInfo("America/New_York")
+
+
+# I-02: same calendar MarketSessionService uses for entry sessions.
+_NYSE_CALENDAR = None
+
+DAY_TRADING = "TRADING"
+DAY_HOLIDAY = "MARKET HOLIDAY"
+
+RESULT_NO_INDEX_TRADING = (
+    "FAIL: NO INDEX ON A TRADING DAY (EDGAR outage or not yet published)"
+)
+RESULT_NO_INDEX_HOLIDAY = "NO INDEX (market holiday)"
+
+
+def is_trading_day(day):
+    """True if NYSE had a session on `day` (half days count)."""
+    global _NYSE_CALENDAR
+    if _NYSE_CALENDAR is None:
+        _NYSE_CALENDAR = mcal.get_calendar("NYSE")
+    sessions = _NYSE_CALENDAR.valid_days(start_date=day, end_date=day)
+    return len(sessions) > 0
 
 
 def parse_master_index(text, forms=RECONCILED_FORMS):
@@ -146,6 +175,7 @@ class Command(BaseCommand):
             gap_rows.extend(gaps)
             self._print_day(summary)
 
+        self._print_totals(summary_rows)
         self._write_reports(Path(options["out_dir"]), days, summary_rows, gap_rows)
 
     # ------------------------------------------------------------------
@@ -170,17 +200,24 @@ class Command(BaseCommand):
         return response.text
 
     def _reconcile_day(self, client, day, universe):
+        day_type = DAY_TRADING if is_trading_day(day) else DAY_HOLIDAY
         text = self._fetch_index(client, day)
 
         if text is None:
+            # I-02: an outage on a trading day must never look like a holiday.
             return {
                 "date": day.isoformat(),
+                "day_type": day_type,
                 "edgar_index": "NOT AVAILABLE",
                 "edgar_count": "",
                 "captured": "",
                 "missing": "",
                 "extra": "",
-                "result": "NO INDEX (holiday, weekend, or not yet published)",
+                "result": (
+                    RESULT_NO_INDEX_TRADING
+                    if day_type == DAY_TRADING
+                    else RESULT_NO_INDEX_HOLIDAY
+                ),
             }, []
 
         edgar = {
@@ -230,6 +267,7 @@ class Command(BaseCommand):
 
         return {
             "date": day.isoformat(),
+            "day_type": day_type,
             "edgar_index": "OK",
             "edgar_count": len(edgar),
             "captured": len(edgar) - len(missing),
@@ -240,7 +278,11 @@ class Command(BaseCommand):
 
     def _print_day(self, s):
         if s["edgar_index"] != "OK":
-            self.stdout.write(f"{s['date']}  {s['result']}")
+            line = f"{s['date']}  {s['result']}"
+            if s["result"] == RESULT_NO_INDEX_TRADING:
+                self.stdout.write(self.style.ERROR(line))
+            else:
+                self.stdout.write(line)
             return
 
         line = (
@@ -249,6 +291,26 @@ class Command(BaseCommand):
             f"extra {s['extra']:>3}  {s['result']}"
         )
         style = self.style.SUCCESS if s["result"] == "MATCH" else self.style.WARNING
+        self.stdout.write(style(line))
+
+    def _print_totals(self, rows):
+        """I-02: one line for the D-02 sign-off table."""
+        trading = sum(1 for r in rows if r["day_type"] == DAY_TRADING)
+        reconciled = sum(1 for r in rows if r["edgar_index"] == "OK")
+        failed = sum(1 for r in rows if r["result"] == RESULT_NO_INDEX_TRADING)
+        holidays = sum(1 for r in rows if r["result"] == RESULT_NO_INDEX_HOLIDAY)
+        gap_days = sum(1 for r in rows if r["result"] == "GAP")
+
+        line = (
+            f"Totals: trading days checked {trading}, "
+            f"days reconciled {reconciled}, "
+            f"days with gaps {gap_days}, "
+            f"days failed (no index on a trading day) {failed}, "
+            f"days skipped as market holidays {holidays}"
+        )
+        style = self.style.ERROR if failed else (
+            self.style.WARNING if gap_days else self.style.SUCCESS
+        )
         self.stdout.write(style(line))
 
     def _write_reports(self, out_dir, days, summary_rows, gap_rows):
