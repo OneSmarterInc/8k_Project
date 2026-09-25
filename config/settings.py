@@ -528,6 +528,41 @@ CORS_ALLOWED_ORIGINS = _env_list(
 # Security review #3: how long a login token stays valid, in hours.
 TOKEN_TTL_HOURS = _env_int("TOKEN_TTL_HOURS", 12)
 
+# ---------------------------------------------------------------------
+# I-07: the session token is delivered as an HttpOnly cookie.
+#
+# JavaScript cannot read an HttpOnly cookie, so an XSS payload can no
+# longer steal the token and replay the session from another machine.
+#
+# AUTH_COOKIE_SECURE
+#   A Secure cookie is ONLY sent over https. Left on in local http
+#   development it silently 401s every request after login: the browser
+#   accepts the cookie, then refuses to send it back.
+#
+#     development (http://localhost)  AUTH_COOKIE_SECURE=False  <- default
+#     production  (https://)          AUTH_COOKIE_SECURE=True   <- REQUIRED
+#
+#   The default is False so a fresh checkout works on localhost. The
+#   deployment .env MUST set it True, or the session cookie travels in
+#   clear over the network.
+#
+# AUTH_COOKIE_SAMESITE
+#   Lax is correct while the browser is SAME-ORIGIN with the API: the
+#   Vite proxy forwards /api/* in development, and production serves
+#   the frontend and the API from one host. The browser then never
+#   attaches this cookie to a cross-site request, which is what makes
+#   CSRF a non-issue here.
+#
+#   If the frontend is ever served from a DIFFERENT origin, this needs
+#   SameSite=None AND AUTH_COOKIE_SECURE=True AND
+#   CORS_ALLOW_CREDENTIALS=True AND withCredentials on the axios
+#   client. All four together, or the session silently stops working.
+# ---------------------------------------------------------------------
+
+AUTH_COOKIE_NAME = _env_str("AUTH_COOKIE_NAME", "watcher_auth")
+AUTH_COOKIE_SAMESITE = _env_str("AUTH_COOKIE_SAMESITE", "Lax")
+AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         # Security review #3: tokens expire after TOKEN_TTL_HOURS.

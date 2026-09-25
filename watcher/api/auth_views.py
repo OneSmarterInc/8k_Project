@@ -17,7 +17,11 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from watcher.api.authentication import get_valid_token
+from watcher.api.authentication import (
+    clear_auth_cookie,
+    get_valid_token,
+    set_auth_cookie,
+)
 
 from .throttles import LoginIPRateThrottle, LoginUsernameRateThrottle
 
@@ -58,7 +62,12 @@ def login(request):
     # Security review #3: reuse a still-valid token, replace an expired one.
     token = get_valid_token(user)
 
-    return Response({"token": token.key, **_user_payload(user)})
+    # I-07: the token now travels in an HttpOnly cookie. It is STILL
+    # returned in the body so any existing client, script or test that
+    # reads "token" keeps working. The browser app no longer stores it.
+    response = Response({"token": token.key, **_user_payload(user)})
+
+    return set_auth_cookie(response, token)
 
 
 @api_view(["GET"])
@@ -71,4 +80,9 @@ def me(request):
 @permission_classes([IsAuthenticated])
 def logout(request):
     Token.objects.filter(user=request.user).delete()
-    return Response({"status": "logged_out"})
+
+    # I-07: clear the cookie too, or the browser keeps sending a key
+    # that no longer resolves and every request 401s until it expires.
+    response = Response({"status": "logged_out"})
+
+    return clear_auth_cookie(response)

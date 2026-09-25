@@ -44,8 +44,52 @@ def get_valid_token(user):
     return token
 
 
+def auth_cookie_name():
+    return getattr(settings, "AUTH_COOKIE_NAME", "watcher_auth")
+
+
+def set_auth_cookie(response, token):
+    """I-07: httponly=True is the point - JavaScript cannot read it."""
+    response.set_cookie(
+        auth_cookie_name(),
+        token.key,
+        max_age=int(token_ttl().total_seconds()),
+        httponly=True,
+        samesite=getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax"),
+        secure=bool(getattr(settings, "AUTH_COOKIE_SECURE", False)),
+        path="/",
+    )
+
+    return response
+
+
+def clear_auth_cookie(response):
+    response.delete_cookie(
+        auth_cookie_name(),
+        path="/",
+        samesite=getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax"),
+    )
+
+    return response
+
+
 class ExpiringTokenAuthentication(TokenAuthentication):
     """TokenAuthentication that also rejects tokens older than the TTL."""
+
+    def authenticate(self, request):
+        """
+        I-07: cookie first, Authorization header as fallback.
+
+        The header path is deliberately retained. Dropping it would log
+        out every session in flight during a deploy and break any
+        script or test that authenticates by header.
+        """
+        key = request.COOKIES.get(auth_cookie_name())
+
+        if key:
+            return self.authenticate_credentials(key)
+
+        return super().authenticate(request)
 
     def authenticate_credentials(self, key):
         user, token = super().authenticate_credentials(key)
