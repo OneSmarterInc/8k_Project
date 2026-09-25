@@ -15,9 +15,11 @@ Run it explicitly with:
 """
 
 from django.conf import settings
-from django.core.checks import Warning, register
+from django.core.checks import Error, Warning, register
 
 CACHE_NOT_SHARED = "watcher.W001"
+INSECURE_AUTH_COOKIE = "watcher.E001"
+UNSAFE_SAMESITE = "watcher.E002"
 
 DEFAULT_PER_PROCESS_BACKENDS = (
     "django.core.cache.backends.locmem.LocMemCache",
@@ -70,3 +72,58 @@ def check_cache_is_shared(app_configs, **kwargs):
             id=CACHE_NOT_SHARED,
         )
     ]
+
+@register(deploy=True)
+def check_auth_cookie_security(app_configs, **kwargs):
+    """
+    P-01 / P-05: refuse to let an insecure cookie configuration ship.
+
+    Registered with deploy=True, so it runs ONLY under
+    `manage.py check --deploy`. Ordinary `manage.py check`, runserver,
+    and the test suite never see it - a laptop on http://localhost is
+    supposed to have AUTH_COOKIE_SECURE=False, and warning about that
+    every time would train everyone to ignore the output.
+
+    The acceptance test for P-01 is that `check --deploy` comes back
+    clean on the server before go-live.
+    """
+    problems = []
+
+    if not settings.DEBUG and not getattr(
+        settings,
+        "AUTH_COOKIE_SECURE",
+        False,
+    ):
+        problems.append(
+            Error(
+                "AUTH_COOKIE_SECURE is False with DEBUG off. The "
+                "session cookie will travel in clear text.",
+                hint=(
+                    "Set AUTH_COOKIE_SECURE=True in the deployment "
+                    ".env. Leave it unset on a laptop: a Secure cookie "
+                    "is never sent back over http://localhost, which "
+                    "401s every request after login."
+                ),
+                id=INSECURE_AUTH_COOKIE,
+            )
+        )
+
+    samesite = getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax")
+
+    if str(samesite).lower() == "none":
+        problems.append(
+            Error(
+                "AUTH_COOKIE_SAMESITE is None, which removes the only "
+                "CSRF protection on cookie-authenticated requests.",
+                hint=(
+                    "Keep SameSite=Lax, which the browser enforces by "
+                    "refusing to attach the cookie to cross-site "
+                    "requests. SameSite=None is only needed when the "
+                    "frontend is served from a different origin, and "
+                    "that needs real CSRF enforcement first (P-05)."
+                ),
+                id=UNSAFE_SAMESITE,
+            )
+        )
+
+    return problems

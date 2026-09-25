@@ -127,3 +127,116 @@ class DefaultCacheUsableTests(TestCase):
                 "CACHE_BACKEND=database and run "
                 "'python manage.py createcachetable'."
             )
+
+class AuthCookieSecurityCheckTests(SimpleTestCase):
+    """
+    P-01 / P-05: watcher.E001 and watcher.E002.
+
+    These run only under `manage.py check --deploy`, so the assertions
+    call the function directly rather than relying on registration.
+    """
+
+    def run_check(self):
+        from watcher.checks import check_auth_cookie_security
+
+        return check_auth_cookie_security(app_configs=None)
+
+    def ids(self):
+        return {problem.id for problem in self.run_check()}
+
+    # ------------------------------------------------------------------
+    # Silent where it should be
+    # ------------------------------------------------------------------
+
+    @override_settings(
+        DEBUG=True,
+        AUTH_COOKIE_SECURE=False,
+        AUTH_COOKIE_SAMESITE="Lax",
+    )
+    def test_localhost_development_is_silent(self):
+        # AUTH_COOKIE_SECURE=False is CORRECT on http://localhost: a
+        # Secure cookie is never sent back, which 401s every request
+        # after login. Warning about it here would be noise.
+        self.assertEqual(self.run_check(), [])
+
+    @override_settings(
+        DEBUG=False,
+        AUTH_COOKIE_SECURE=True,
+        AUTH_COOKIE_SAMESITE="Lax",
+    )
+    def test_correct_production_config_is_silent(self):
+        self.assertEqual(self.run_check(), [])
+
+    # ------------------------------------------------------------------
+    # Loud where it should be
+    # ------------------------------------------------------------------
+
+    @override_settings(
+        DEBUG=False,
+        AUTH_COOKIE_SECURE=False,
+        AUTH_COOKIE_SAMESITE="Lax",
+    )
+    def test_insecure_cookie_in_production_is_an_error(self):
+        problems = self.run_check()
+
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(problems[0].id, "watcher.E001")
+        self.assertIn("clear text", problems[0].msg)
+
+    @override_settings(
+        DEBUG=False,
+        AUTH_COOKIE_SECURE=True,
+        AUTH_COOKIE_SAMESITE="None",
+    )
+    def test_samesite_none_is_an_error(self):
+        problems = self.run_check()
+
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(problems[0].id, "watcher.E002")
+        self.assertIn("CSRF", problems[0].msg)
+
+    @override_settings(
+        DEBUG=False,
+        AUTH_COOKIE_SECURE=True,
+        AUTH_COOKIE_SAMESITE="none",
+    )
+    def test_samesite_none_is_matched_case_insensitively(self):
+        self.assertIn("watcher.E002", self.ids())
+
+    @override_settings(
+        DEBUG=False,
+        AUTH_COOKIE_SECURE=False,
+        AUTH_COOKIE_SAMESITE="None",
+    )
+    def test_both_errors_can_fire_together(self):
+        self.assertEqual(self.ids(), {"watcher.E001", "watcher.E002"})
+
+
+class TlsSettingsDefaultTests(SimpleTestCase):
+    """
+    P-01: every TLS setting must default OFF so localhost keeps working.
+
+    SECURE_SSL_REDIRECT in particular would make the dev server bounce
+    every request to https:// and nothing would load.
+    """
+
+    def test_tls_settings_default_off(self):
+        from django.conf import settings as s
+
+        self.assertFalse(s.SECURE_SSL_REDIRECT)
+        self.assertFalse(s.SESSION_COOKIE_SECURE)
+        self.assertFalse(s.CSRF_COOKIE_SECURE)
+        self.assertEqual(s.SECURE_HSTS_SECONDS, 0)
+
+    def test_hsts_subsettings_are_off_when_hsts_is_off(self):
+        # Sending HSTS headers from a host not fully on https locks
+        # browsers out of it for the duration.
+        from django.conf import settings as s
+
+        self.assertFalse(s.SECURE_HSTS_INCLUDE_SUBDOMAINS)
+        self.assertFalse(s.SECURE_HSTS_PRELOAD)
+
+    def test_proxy_ssl_header_is_not_trusted_by_default(self):
+        from django.conf import settings as s
+
+        self.assertIsNone(s.SECURE_PROXY_SSL_HEADER)

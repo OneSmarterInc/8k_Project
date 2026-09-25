@@ -563,6 +563,50 @@ AUTH_COOKIE_NAME = _env_str("AUTH_COOKIE_NAME", "watcher_auth")
 AUTH_COOKIE_SAMESITE = _env_str("AUTH_COOKIE_SAMESITE", "Lax")
 AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
 
+
+# ---------------------------------------------------------------------
+# P-01: TLS hardening.
+#
+# Every one of these defaults to OFF so a laptop on http://localhost
+# keeps working untouched. SECURE_SSL_REDIRECT in particular would make
+# the dev server bounce every request to https:// and nothing would
+# load.
+#
+# Production sets all four in .env. `manage.py check --deploy` reports
+# each of them when unset, and watcher/checks.py raises watcher.E001
+# if the auth cookie is left insecure, so the mistake cannot ship
+# quietly.
+#
+#   SECURE_SSL_REDIRECT=True        redirect http -> https
+#   SECURE_HSTS_SECONDS=31536000    one year; tell browsers https only
+#   SESSION_COOKIE_SECURE=True      Django session cookie, https only
+#   CSRF_COOKIE_SECURE=True         CSRF cookie, https only
+#
+# SECURE_HSTS_* are deliberately gated on SECURE_HSTS_SECONDS being
+# non-zero. Sending HSTS headers from a host that is not yet fully on
+# https locks browsers out of it for the duration.
+# ---------------------------------------------------------------------
+
+SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", False)
+CSRF_COOKIE_SECURE = _env_bool("CSRF_COOKIE_SECURE", False)
+
+SECURE_HSTS_SECONDS = _env_int("SECURE_HSTS_SECONDS", 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = bool(SECURE_HSTS_SECONDS) and _env_bool(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS",
+    True,
+)
+SECURE_HSTS_PRELOAD = bool(SECURE_HSTS_SECONDS) and _env_bool(
+    "SECURE_HSTS_PRELOAD",
+    False,
+)
+
+# Behind a reverse proxy Django sees plain http on the internal hop, so
+# without this SECURE_SSL_REDIRECT loops forever. Only trust the header
+# when the deployment explicitly says a proxy sets it.
+if _env_bool("USE_X_FORWARDED_PROTO", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         # Security review #3: tokens expire after TOKEN_TTL_HOURS.
