@@ -6,7 +6,8 @@ GET  /api/auth/me/      -> {username, is_staff}
 POST /api/auth/logout/  -> deletes the caller's token
 """
 
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
+from django.core import signing
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from rest_framework.authtoken.models import Token
@@ -24,7 +25,24 @@ from watcher.api.authentication import (
     set_auth_cookie,
 )
 
-from .throttles import LoginIPRateThrottle, LoginUsernameRateThrottle
+from .throttles import (
+    LoginIPRateThrottle,
+    LoginUsernameRateThrottle,
+    MFAVerifyRateThrottle,
+)
+from watcher.services.totp_service import (
+    consume_backup_code,
+    has_confirmed_device,
+    verify_code,
+)
+
+# MFA-01: the handle between step 1 and step 2 of login.
+#
+# A signed, timestamped user id rather than a database row: tamper
+# proof, self-expiring, nothing to clean up. Five minutes is long
+# enough to open an authenticator app.
+MFA_SALT = "watcher.mfa.login"
+MFA_TOKEN_MAX_AGE = 300
 
 
 def _user_payload(user):
@@ -59,6 +77,20 @@ def login(request):
             {"detail": "Invalid username or password."},
             status=400,
         )
+
+    # MFA-01: a user with a confirmed authenticator must present a
+    # second factor. NOTHING is issued here - no token, no cookie - so
+    # a stolen password alone gets only a short-lived signed handle.
+    #
+    # A user WITHOUT a confirmed device falls straight through to the
+    # original response below, byte for byte.
+    if has_confirmed_device(user):
+        return Response({
+            "mfa_required": True,
+            "mfa_token": signing.TimestampSigner(
+                salt=MFA_SALT,
+            ).sign(str(user.pk)),
+        })
 
     # Security review #3: reuse a still-valid token, replace an expired one.
     token = get_valid_token(user)
@@ -104,3 +136,60 @@ def csrf(request):
     from this origin.
     """
     return Response({"detail": "CSRF cookie set."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginIPRateThrottle, MFAVerifyRateThrottle])
+def login_verify(request):
+    """
+    POST /api/auth/login/verify/  {mfa_token, code}
+
+    Step 2 of login. `code` is either a six-digit authenticator code or
+    one of the backup codes issued at enrolment.
+
+    Throttled: six digits is a million combinations, which is trivially
+    brute-forceable without a limit.
+    """
+    mfa_token = request.data.get("mfa_token") or ""
+    code = request.data.get("code") or ""
+
+    try:
+        user_pk = signing.TimestampSigner(salt=MFA_SALT).unsign(
+            mfa_token,
+            max_age=MFA_TOKEN_MAX_AGE,
+        )
+
+    except signing.SignatureExpired:
+        return Response(
+            {"detail": "That took too long. Please sign in again."},
+            status=400,
+        )
+
+    except signing.BadSignature:
+        return Response(
+            {"detail": "Invalid sign-in attempt."},
+            status=400,
+        )
+
+    user = get_user_model().objects.filter(pk=user_pk).first()
+
+    if user is None or not user.is_active:
+        return Response(
+            {"detail": "Invalid sign-in attempt."},
+            status=400,
+        )
+
+    # A backup code is longer than six digits, so trying the
+    # authenticator first costs nothing and keeps the common path fast.
+    if not verify_code(user, code) and not consume_backup_code(user, code):
+        return Response(
+            {"detail": "That code is not valid."},
+            status=400,
+        )
+
+    token = get_valid_token(user)
+
+    response = Response({"token": token.key, **_user_payload(user)})
+
+    return set_auth_cookie(response, token)

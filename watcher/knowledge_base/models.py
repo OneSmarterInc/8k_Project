@@ -900,3 +900,74 @@ class SMTPConfig(models.Model):
 
     def __str__(self):
         return f"{self.host}:{self.port} ({self.security})"
+
+
+class TOTPDevice(models.Model):
+    """
+    MFA-01: a TOTP authenticator binding for one user.
+
+    Opt-in. A user with no CONFIRMED device logs in exactly as before,
+    which is what makes this safe to deploy without a migration window.
+
+    `confirmed` is the gate. The secret is generated at setup but the
+    device does nothing until the user proves they scanned it by
+    submitting a valid code. Without that, a failed enrolment would
+    lock the account out.
+
+    `last_used_step` prevents replay. A TOTP code stays valid for its
+    whole 30-second step, so a code observed in transit could be
+    re-sent. Recording the step it was used at and refusing anything
+    at or below it closes that.
+    """
+
+    user = models.OneToOneField(
+        "auth.User",
+        on_delete=models.CASCADE,
+        related_name="totp_device",
+    )
+
+    secret = models.CharField(max_length=64)
+
+    confirmed = models.BooleanField(default=False)
+
+    last_used_step = models.BigIntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "TOTP device"
+
+    def __str__(self):
+        state = "confirmed" if self.confirmed else "pending"
+        return f"TOTP device for {self.user} ({state})"
+
+
+class BackupCode(models.Model):
+    """
+    MFA-01: one single-use recovery code.
+
+    Without these a lost phone is a permanent lockout with no recovery
+    path. Stored HASHED with Django's password hasher, shown to the
+    user exactly once at enrolment.
+    """
+
+    user = models.ForeignKey(
+        "auth.User",
+        on_delete=models.CASCADE,
+        related_name="backup_codes",
+    )
+
+    code_hash = models.CharField(max_length=128)
+
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "used_at"]),
+        ]
+
+    def __str__(self):
+        return f"Backup code for {self.user}"

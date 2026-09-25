@@ -1,5 +1,6 @@
 from watcher.knowledge_base.models import (
     AutomationRun,
+    BackupCode,
     ChunkEmbedding,
     Company,
     CompanyAlias,
@@ -13,11 +14,14 @@ from watcher.knowledge_base.models import (
     ScheduleConfig,
     ScheduleConfig,
     SMTPConfig,
+    TOTPDevice,
 )
 
 
 __all__ = [
     "AutomationRun",
+    "BackupCode",
+    "TOTPDevice",
     "ChunkEmbedding",
     "Company",
     "CompanyAlias",

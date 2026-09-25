@@ -1,5 +1,5 @@
 from django.urls import path
-from . import auth_views
+from . import auth_views, mfa_views
 
 from .views import (
     SMTPConfigView,
@@ -21,8 +21,25 @@ urlpatterns = [
     # P-05: issues the csrftoken cookie. Must be reachable before login.
     path("auth/csrf/", auth_views.csrf, name="auth_csrf"),
     path("auth/login/", auth_views.login, name="auth_login"),
+    # MFA-01: step 2 of login for users with an authenticator.
+    path(
+        "auth/login/verify/",
+        auth_views.login_verify,
+        name="auth_login_verify",
+    ),
     path("auth/me/", auth_views.me, name="auth_me"),
     path("auth/logout/", auth_views.logout, name="auth_logout"),
+
+    # MFA-01: authenticator enrolment. All require a signed-in session.
+    path("auth/mfa/", mfa_views.mfa_status, name="mfa_status"),
+    path("auth/mfa/setup/", mfa_views.mfa_setup, name="mfa_setup"),
+    path("auth/mfa/confirm/", mfa_views.mfa_confirm, name="mfa_confirm"),
+    path("auth/mfa/disable/", mfa_views.mfa_disable, name="mfa_disable"),
+    path(
+        "auth/mfa/backup-codes/",
+        mfa_views.mfa_backup_codes,
+        name="mfa_backup_codes",
+    ),
 
     # ... your existing paths stay below ...
     path(

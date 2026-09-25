@@ -37,3 +37,27 @@ class LoginUsernameRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": username,
         }
+
+
+class MFAVerifyRateThrottle(SimpleRateThrottle):
+    """
+    MFA-01: limit second-factor attempts.
+
+    Six digits is a million combinations. Without a limit an attacker
+    holding a valid mfa_token could brute force it in minutes. Keyed on
+    the handle, so one compromised password cannot lock a different
+    user out.
+    """
+
+    scope = "mfa_verify"
+
+    def get_cache_key(self, request, view):
+        handle = request.data.get("mfa_token") or ""
+
+        if not handle:
+            return None
+
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": handle[-32:],
+        }

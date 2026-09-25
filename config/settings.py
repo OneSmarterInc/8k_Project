@@ -667,6 +667,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "login_ip": _env_str("LOGIN_RATE_IP", "10/minute"),
         "login_user": _env_str("LOGIN_RATE_USER", "5/minute"),
+        # MFA-01: second-factor attempts per sign-in handle.
+        "mfa_verify": _env_str("MFA_VERIFY_RATE", "5/minute"),
     },
 }
 
