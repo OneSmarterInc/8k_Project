@@ -6,6 +6,8 @@ from .views import (
     ScheduleConfigView,
     filings,
     # resolve_amendment,  # 8-K/A DISABLED
+    queue_export_download,
+    queue_exports,
     run_logs,
     runs,
     trigger_run,
@@ -31,6 +33,17 @@ urlpatterns = [
     #     resolve_amendment,
     #     name="resolve_amendment",
     # ),
+    # W-038: capture queue exports. Read-only listing and download.
+    path(
+        "queue/exports/",
+        queue_exports,
+        name="queue_exports",
+    ),
+    path(
+        "queue/exports/<str:filename>/",
+        queue_export_download,
+        name="queue_export_download",
+    ),
     path(
         "runs/",
         runs,

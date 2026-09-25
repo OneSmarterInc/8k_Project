@@ -22,6 +22,10 @@ from .filings import (
     FilingPagination,
     filings,
 )
+from .queue_exports import (
+    queue_export_download,
+    queue_exports,
+)
 from .smtp import SMTPConfigView
 from .schedule import ScheduleConfigView
 
@@ -41,6 +45,8 @@ __all__ = [
     "run_logs",
     "FilingPagination",
     "filings",
+    "queue_exports",
+    "queue_export_download",
     "SMTPConfigView",
     "ScheduleConfigView",
     "SubprocessWatcherLauncher",
