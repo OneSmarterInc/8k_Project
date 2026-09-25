@@ -9,8 +9,10 @@ backend/.env is never touched.
 """
 
 import os
+import stat
 import shutil
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -322,6 +324,43 @@ class SMTPSettingsSourceTests(TempEnvMixin, TestCase):
             self.tmp_env.read_bytes(),
             b'\xef\xbb\xbfDB_HOST=localhost\r\nSMTP_PASSWORD="new"\r\n',
         )
+
+        # --- I-03: .env permissions survive an SMTP password save ----------
+    # POSIX only: on Windows chmod only toggles the read-only flag and
+    # the permission problem this fixes cannot occur.
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions only")
+    def test_env_file_permissions_are_preserved(self):
+        os.chmod(self.tmp_env, 0o640)
+        write_env_value("SMTP_PASSWORD", "secret")
+        self.assertEqual(stat.S_IMODE(os.stat(self.tmp_env).st_mode), 0o640)
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions only")
+    def test_group_readable_env_stays_group_readable(self):
+        os.chmod(self.tmp_env, 0o644)
+        write_env_value("SMTP_PASSWORD", "secret")
+        write_env_value("SMTP_PASSWORD", "secret-2")
+        self.assertEqual(stat.S_IMODE(os.stat(self.tmp_env).st_mode), 0o644)
+
+    @unittest.skipIf(os.name == "nt", "POSIX file ownership only")
+    def test_env_file_owner_is_preserved(self):
+        before = os.stat(self.tmp_env)
+        write_env_value("SMTP_PASSWORD", "secret")
+        after = os.stat(self.tmp_env)
+        self.assertEqual((after.st_uid, after.st_gid), (before.st_uid, before.st_gid))
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions only")
+    def test_new_env_file_is_private(self):
+        self.tmp_env.unlink()
+        write_env_value("SMTP_PASSWORD", "brand-new")
+        self.assertEqual(stat.S_IMODE(os.stat(self.tmp_env).st_mode), 0o600)
+
+    def test_permission_copy_failure_does_not_break_the_save(self):
+        # chown refused (not root / not owner): the value is still saved.
+        with patch("watcher.services.env_file.os.chown",
+                   side_effect=PermissionError, create=True):
+            write_env_value("SMTP_PASSWORD", "still-saved")
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "still-saved")
 
     def test_creates_env_file_if_missing(self):
         self.tmp_env.unlink()

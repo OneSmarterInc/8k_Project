@@ -1,0 +1,15 @@
+[33mb84dcd7[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m SMTP password entered in the UI is saved as SMTP_PASSWORD in .env (that line only), read fresh for every email
+[33mc0c3fbd[m Revert "W-041 properly. Your Vite proxy makes the browser same-origin, which means an HttpOnly cookie works cleanly."
+[33m4e15521[m Remove applied patch file; ignore *.patch
+[33me64d3e1[m W-041 properly. Your Vite proxy makes the browser same-origin, which means an HttpOnly cookie works cleanly.
+[33m3147f48[m Add daily_reconcile.bat and create the cache table in migrate
+[33m8bba894[m Pagination opt-in    Still opt-in by design — arguably already settled, worth confirming it's a decision
+[33m9e5bc63[m W-039 is resolved Login throttle per-process    No cache backend configured in settings.py
+[33me5a3989[m view.py is split for managing the code
+[33m5e411be[m view.py is split for managing the code
+[33m399633b[m w014 testing file corerstly place in test folder
+[33m82047ce[m Disable 8-K/A: stop capturing amendments; comment out linking, review and resolve code (tagged 8-K/A DISABLED)
+[33md2ccab2[m Add queue export command and watcher updates
+[33macccdbf[m W-037: intraday interval polling and nightly catch-up sweep (R-08, R-09)
+[33m10cfd22[m Merge branch 'main' of https://github.com/OneSmarterInc/8k_Project
+[33m948e43f[m Review #10: daily_backup.bat finds the backend folder and Python itself; no hardcoded D:\ path

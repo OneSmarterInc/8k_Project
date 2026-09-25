@@ -14,12 +14,18 @@ Rules:
     back exactly as typed, including spaces, quotes, '#' and '='.
   - The file is written atomically (temp file + os.replace), so a crash
     can never leave a half-written .env.
+  - The original file's permissions (and, where allowed, owner/group)
+    are copied onto the new file (I-03). Without this, the temp file's
+    private 0600 mode and the web process's owner would replace them,
+    and a watcher/scheduler running as another user could lose access
+    to .env after the next restart. A brand-new .env is created 0600.
   - Reads are done fresh from the file every time, so every process
     (web server, watcher subprocess, scheduler) uses the latest value
     without a restart.
 """
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -88,6 +94,31 @@ def read_env_value(key, path=None):
             value = _parse_value(raw_line)  # last occurrence wins
     return value
 
+def _copy_file_identity(original, tmp_name):
+    """
+    I-03: give the temp file the original .env's mode (and owner/group
+    where the OS allows it) before it replaces .env.
+
+    On Windows, chmod only controls the read-only flag and chown does
+    not exist, so this is effectively a no-op there; the permission
+    problem it solves only arises on Linux/macOS servers.
+    """
+    if original is None:
+        # New .env: private by default.
+        os.chmod(tmp_name, 0o600)
+        return
+
+    os.chmod(tmp_name, stat.S_IMODE(original.st_mode))
+
+    chown = getattr(os, "chown", None)  # absent on Windows
+    if chown is None:
+        return
+    try:
+        chown(tmp_name, original.st_uid, original.st_gid)
+    except PermissionError:
+        # Not root and not the owner: the mode is still preserved,
+        # which covers the usual case of web and worker as one user.
+        pass
 
 def write_env_value(key, value, path=None):
     """
@@ -121,6 +152,14 @@ def write_env_value(key, value, path=None):
     if has_bom:
         data = b"\xef\xbb\xbf" + data
 
+        # I-03: remember the existing file's identity so it survives the swap.
+    try:
+        original = os.stat(path)
+    except FileNotFoundError:
+        original = None
+    except OSError as exc:
+        raise EnvFileError(f"Cannot read {path.name}: {exc}") from exc
+
     directory = path.parent
     try:
         fd, tmp_name = tempfile.mkstemp(
@@ -129,6 +168,7 @@ def write_env_value(key, value, path=None):
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
+            _copy_file_identity(original, tmp_name)
             os.replace(tmp_name, str(path))
         except BaseException:
             try:
