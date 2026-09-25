@@ -872,13 +872,8 @@ class FailureEvent(models.Model):
         )
 
 class SMTPConfig(models.Model):
-    """
-    W-034: SMTP settings edited from the UI.
-
-    Stored in the database, never written to .env. Exactly one row
-    (pk=1). The password is NOT stored here: it stays in the server
-    environment as SMTP_PASSWORD, set by whoever deploys the server.
-    """
+    reply_to_email = models.EmailField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Security(models.TextChoices):
         TLS = "TLS", "TLS"

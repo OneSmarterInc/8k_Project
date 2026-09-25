@@ -1,6 +1,16 @@
-"""W-034: SMTP settings can no longer rewrite .env or probe other hosts."""
+"""W-034: SMTP settings can no longer rewrite .env or probe other hosts.
+
+The SMTP password can be set from the UI: it is written as the single
+SMTP_PASSWORD line in .env (nothing else in .env changes), never
+returned, and a blank value keeps the current one.
+
+Every test here points SMTP_ENV_FILE at a temporary file, so the real
+backend/.env is never touched.
+"""
 
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +21,10 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from watcher.models import SMTPConfig
+from watcher.services.env_file import (
+    read_env_value,
+    write_env_value,
+)
 from watcher.services.smtp_settings import get_smtp_settings
 
 URL = "/api/settings/smtp/"
@@ -26,9 +40,38 @@ VALID = {
 }
 
 
-class SMTPConfigApiTests(TestCase):
+class TempEnvMixin:
+    """Point SMTP_ENV_FILE at a throwaway .env for each test."""
+
+    ENV_TEMPLATE = (
+        "# backend settings\n"
+        "DB_HOST=localhost\n"
+        "ENTRY_RULE=T_PLUS_1\n"
+        "SMTP_PASSWORD=old-env-pass\n"
+        "DJANGO_DEBUG=True\n"
+    )
 
     def setUp(self):
+        super().setUp()
+        self._tmpdir = tempfile.mkdtemp()
+        self.tmp_env = Path(self._tmpdir) / ".env"
+        self.tmp_env.write_text(self.ENV_TEMPLATE, encoding="utf-8")
+        override = override_settings(SMTP_ENV_FILE=str(self.tmp_env))
+        override.enable()
+        self.addCleanup(override.disable)
+        self.addCleanup(shutil.rmtree, self._tmpdir, True)
+        # Keep this process's environment clean between tests.
+        saved = os.environ.pop("SMTP_PASSWORD", None)
+        self.addCleanup(
+            lambda: os.environ.__setitem__("SMTP_PASSWORD", saved)
+            if saved is not None else os.environ.pop("SMTP_PASSWORD", None)
+        )
+
+
+class SMTPConfigApiTests(TempEnvMixin, TestCase):
+
+    def setUp(self):
+        super().setUp()
         admin = get_user_model().objects.create_user(
             username="admin", password="pw-123-admin", is_staff=True
         )
@@ -76,12 +119,116 @@ class SMTPConfigApiTests(TestCase):
         response = self.client.post(f"{URL}?action=save", payload, format="json")
         self.assertEqual(response.status_code, 400)
 
-    def test_password_in_request_is_ignored(self):
-        payload = dict(VALID, smtpPassword="should-not-be-stored")
-        response = self.client.post(f"{URL}?action=save", payload, format="json")
+    # --- password from the UI -> SMTP_PASSWORD in .env ---------------
+
+    def _save(self, **extra):
+        return self.client.post(
+            f"{URL}?action=save", dict(VALID, **extra), format="json"
+        )
+
+    def test_password_is_written_to_env_file(self):
+        response = self._save(smtpPassword="New-Pass-123")
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(hasattr(SMTPConfig.objects.get(pk=1), "password"))
-        self._env_unchanged()
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "New-Pass-123")
+        self.assertEqual(get_smtp_settings().password, "New-Pass-123")
+        self._env_unchanged()  # the REAL .env is untouched
+
+    def test_only_the_password_line_changes(self):
+        self._save(smtpPassword="New-Pass-123")
+        lines = self.tmp_env.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            lines,
+            [
+                "# backend settings",
+                "DB_HOST=localhost",
+                "ENTRY_RULE=T_PLUS_1",
+                "DJANGO_DEBUG=True",
+                'SMTP_PASSWORD="New-Pass-123"',
+            ],
+        )
+
+    def test_password_is_read_back_exactly(self):
+        tricky = '  a"b #c =d\'e  '
+        self._save(smtpPassword=tricky)
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), tricky)
+
+    def test_blank_password_keeps_the_current_one(self):
+        self._save(smtpPassword="")
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "old-env-pass")
+
+    def test_missing_password_field_keeps_the_current_one(self):
+        self._save()
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "old-env-pass")
+
+    def test_injection_through_password_is_rejected(self):
+        before = self.tmp_env.read_bytes()
+        response = self._save(
+            smtpPassword="x\nDB_HOST=evil\nENTRY_RULE=SAME_SESSION"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.tmp_env.read_bytes(), before)
+        self.assertFalse(SMTPConfig.objects.exists())
+
+    def test_control_characters_in_password_are_rejected(self):
+        response = self._save(smtpPassword="abc\x00def")
+        self.assertEqual(response.status_code, 400)
+
+    def test_overlong_password_is_rejected(self):
+        response = self._save(smtpPassword="x" * 257)
+        self.assertEqual(response.status_code, 400)
+
+    def test_get_never_returns_the_password(self):
+        self._save(smtpPassword="ui-secret-123")
+        data = self.client.get(URL).json()
+        self.assertTrue(data["passwordConfigured"])
+        self.assertNotIn("ui-secret-123", str(data))
+
+    def test_unwritable_env_returns_error_and_saves_nothing(self):
+        with patch(
+            "watcher.api.views.smtp.write_env_value",
+            side_effect=__import__(
+                "watcher.services.env_file", fromlist=["EnvFileError"]
+            ).EnvFileError("Cannot write .env: permission denied"),
+        ):
+            response = self._save(smtpPassword="New-Pass-123")
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("permission denied", response.json()["message"])
+        self.assertFalse(SMTPConfig.objects.exists())
+
+    def _mock_connection(self):
+        from django.core.mail.backends.locmem import EmailBackend
+        mocker = patch("watcher.services.smtp_settings.get_connection")
+        started = mocker.start()
+        started.return_value = EmailBackend()
+        self.addCleanup(mocker.stop)
+        return started
+
+    def test_test_uses_typed_password_but_saved_host(self):
+        self._save(smtpPassword="saved-pass")
+        conn = self._mock_connection()
+        response = self.client.post(
+            f"{URL}?action=test",
+            {"smtpPassword": "typed-pass", "smtpHost": "10.0.0.5"},
+            format="json",
+        )
+        self.assertEqual(response.json()["status"], "success")
+        self.assertEqual(conn.call_args.kwargs["password"], "typed-pass")
+        self.assertEqual(conn.call_args.kwargs["host"], "smtp.example.com")
+        # Testing never changes the saved password.
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "saved-pass")
+
+    def test_test_uses_saved_password_when_none_typed(self):
+        self._save(smtpPassword="saved-pass")
+        conn = self._mock_connection()
+        self.client.post(f"{URL}?action=test", {}, format="json")
+        self.assertEqual(conn.call_args.kwargs["password"], "saved-pass")
+
+    def test_test_rejects_newline_in_typed_password(self):
+        self._save()
+        response = self.client.post(
+            f"{URL}?action=test", {"smtpPassword": "a\r\nb"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_second_save_updates_the_single_row(self):
         self.client.post(f"{URL}?action=save", VALID, format="json")
@@ -131,7 +278,7 @@ class SMTPConfigApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
-class SMTPSettingsSourceTests(TestCase):
+class SMTPSettingsSourceTests(TempEnvMixin, TestCase):
 
     @override_settings(
         EMAIL_HOST="env.example.com",
@@ -153,6 +300,30 @@ class SMTPSettingsSourceTests(TestCase):
         self.assertTrue(smtp.use_ssl)
         self.assertFalse(smtp.use_tls)
 
-    def test_password_only_from_environment(self):
-        with patch.dict(os.environ, {"SMTP_PASSWORD": "from-env"}):
-            self.assertEqual(get_smtp_settings().password, "from-env")
+    def test_password_read_fresh_from_env_file(self):
+        # Another process updating .env is seen immediately (no restart),
+        # even if this process still has an old value in its environment.
+        with patch.dict(os.environ, {"SMTP_PASSWORD": "stale-in-memory"}):
+            write_env_value("SMTP_PASSWORD", "fresh-in-file")
+            os.environ["SMTP_PASSWORD"] = "stale-in-memory"
+            self.assertEqual(get_smtp_settings().password, "fresh-in-file")
+
+    def test_environment_is_fallback_when_env_file_has_no_password(self):
+        write_env_value("SMTP_PASSWORD", None)  # remove the line
+        with patch.dict(os.environ, {"SMTP_PASSWORD": "from-os-env"}):
+            self.assertEqual(get_smtp_settings().password, "from-os-env")
+
+    def test_crlf_and_bom_are_preserved(self):
+        self.tmp_env.write_bytes(
+            b"\xef\xbb\xbfDB_HOST=localhost\r\nSMTP_PASSWORD=old\r\n"
+        )
+        write_env_value("SMTP_PASSWORD", "new")
+        self.assertEqual(
+            self.tmp_env.read_bytes(),
+            b'\xef\xbb\xbfDB_HOST=localhost\r\nSMTP_PASSWORD="new"\r\n',
+        )
+
+    def test_creates_env_file_if_missing(self):
+        self.tmp_env.unlink()
+        write_env_value("SMTP_PASSWORD", "brand-new")
+        self.assertEqual(read_env_value("SMTP_PASSWORD"), "brand-new")

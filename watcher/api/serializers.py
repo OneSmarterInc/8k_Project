@@ -265,6 +265,17 @@ class SMTPConfigSerializer(serializers.Serializer):
     replyToEmail = serializers.EmailField(
         allow_blank=True, required=False, default=""
     )
+        # Optional. Blank or missing = keep the currently saved password.
+    # Write-only: never echoed back. Stored encrypted by the view.
+    smtpPassword = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=256,
+        trim_whitespace=False,
+        write_only=True,
+    )
+
 
     def validate(self, data):
         # Newlines were the .env injection vector. Reject them everywhere.

@@ -5,8 +5,11 @@ Order of precedence:
   1. The SMTPConfig row saved from the UI (host, port, sender, ...).
   2. If no row exists yet, the SMTP_* values from settings/.env.
 
-The password ALWAYS comes from the SMTP_PASSWORD environment variable.
-It is never read from, or written through, the API.
+The password comes from SMTP_PASSWORD in backend/.env. It can be set
+from the UI (admin-only): the API writes ONLY that one line in .env and
+never returns the password. It is read fresh from .env every time, so
+all processes use the latest value without a restart. If .env has no
+SMTP_PASSWORD line, the SMTP_PASSWORD environment variable is used.
 """
 
 import os
@@ -14,6 +17,8 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.core.mail import get_connection
+
+from watcher.services.env_file import SMTP_PASSWORD_KEY, read_env_value
 
 # Outbound SMTP ports the server is allowed to connect to.
 ALLOWED_SMTP_PORTS = frozenset({25, 465, 587, 2525})
@@ -29,9 +34,19 @@ class SMTPSettings:
     sender_email: str
     reply_to_email: str
 
+    # Set only for a one-off connection test with a typed password.
+    override_password: str = ""
+
     @property
     def password(self):
-        return os.environ.get("SMTP_PASSWORD", "")
+        if self.override_password:
+            return self.override_password
+        # Fresh from .env on every use (web server, watcher subprocess
+        # and scheduler all see the latest saved password).
+        from_file = read_env_value(SMTP_PASSWORD_KEY)
+        if from_file is not None:
+            return from_file
+        return os.environ.get(SMTP_PASSWORD_KEY, "")
 
     @property
     def use_ssl(self):
