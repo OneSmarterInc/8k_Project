@@ -7,6 +7,7 @@ from .views import (
     filings,
     # resolve_amendment,  # 8-K/A DISABLED
     queue_export_download,
+    queue_export_regenerate,
     queue_exports,
     run_logs,
     runs,
@@ -38,6 +39,13 @@ urlpatterns = [
         "queue/exports/",
         queue_exports,
         name="queue_exports",
+    ),
+    # Regenerate must be declared BEFORE the <str:filename> route,
+    # otherwise "regenerate" is captured as a filename and 404s.
+    path(
+        "queue/exports/regenerate/",
+        queue_export_regenerate,
+        name="queue_export_regenerate",
     ),
     path(
         "queue/exports/<str:filename>/",

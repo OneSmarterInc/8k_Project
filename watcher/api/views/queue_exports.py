@@ -21,6 +21,8 @@ Security:
 """
 
 import csv
+import io
+import logging
 import re
 
 from datetime import datetime, timedelta
@@ -35,6 +37,8 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 from watcher.management.commands.export_queue import market_today
 
@@ -175,8 +179,27 @@ def queue_exports(request):
     )
 
     payload["files"] = described[:MAX_LISTED_FILES]
+
+    # Mark the newest revision of each day as the current picture, and
+    # everything below it as superseded.
+    #
+    # Without this the UI lists "2026-09-24.csv" and
+    # "2026-09-24.r2.csv" side by side with nothing saying which is
+    # live, so it is easy to download a stale one-row snapshot and
+    # believe the day really had one filing. The files themselves stay
+    # append-only; this only labels them.
+    seen_days = set()
+
+    for row in payload["files"]:
+        row["is_current"] = row["date"] not in seen_days
+        seen_days.add(row["date"])
+
+    # Count each day once, from its current revision, so the summary
+    # line is "6 filings" rather than 1 + 6 across two revisions.
     payload["total_rows"] = sum(
-        row["rows"] or 0 for row in payload["files"]
+        row["rows"] or 0
+        for row in payload["files"]
+        if row["is_current"]
     )
 
     return Response(payload)
@@ -210,3 +233,79 @@ def queue_export_download(request, filename):
         filename=filename,
         content_type="text/csv",
     )
+
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def queue_export_regenerate(request):
+    """
+    POST /api/queue/exports/regenerate/  {start, end}
+
+    Re-runs `export_queue` for the range so a missed scheduled export
+    can be recovered without shell access.
+
+    This is the ONE write in this module, and it is deliberate:
+
+    - It never overwrites. `export_queue` writes a new revision when
+      the day's rows differ and writes nothing at all when they do not,
+      so the append-only guarantee is untouched.
+    - It is an explicit user action, not a side effect of viewing the
+      page. The listing and download endpoints stay read-only.
+    - Admin only, like the rest of this module.
+    """
+    from django.core.management import call_command
+
+    today = market_today()
+
+    end = parse_date(request.data.get("end"), today)
+    start = parse_date(
+        request.data.get("start"),
+        today - timedelta(days=DEFAULT_RANGE_DAYS - 1),
+    )
+
+    if start is None or end is None:
+        return Response(
+            {"detail": "Dates must be YYYY-MM-DD."},
+            status=400,
+        )
+
+    if start > end:
+        return Response(
+            {"detail": "start must not be after end."},
+            status=400,
+        )
+
+    days = (end - start).days + 1
+
+    if days > MAX_RANGE_DAYS:
+        return Response(
+            {
+                "detail": (
+                    f"Range too wide; {MAX_RANGE_DAYS} days maximum."
+                )
+            },
+            status=400,
+        )
+
+    output = io.StringIO()
+
+    try:
+        call_command(
+            "export_queue",
+            date=end.isoformat(),
+            days=days,
+            stdout=output,
+        )
+
+    except Exception as exc:
+        logger.error("Queue export regeneration failed: %s", exc)
+
+        return Response(
+            {"detail": f"Export failed: {exc}"},
+            status=500,
+        )
+
+    return Response({
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "output": output.getvalue().strip().splitlines(),
+    })

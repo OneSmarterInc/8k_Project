@@ -27,3 +27,6 @@ test_smtp.py
 reports/
 # W-038 queue file exports
 queue/
+
+# P-04: rotating log history
+logs/

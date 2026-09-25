@@ -32,7 +32,10 @@ ROW = (
 )
 
 
-class QueueExportsTests(TestCase):
+class QueueFixtureMixin:
+    """Shared fixture: a temp queue/ with four files and two users."""
+
+
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -81,6 +84,9 @@ class QueueExportsTests(TestCase):
     # Range filtering
     # ------------------------------------------------------------------
 
+
+class QueueExportsTests(QueueFixtureMixin, TestCase):
+
     def test_range_returns_only_files_inside_it(self):
         data = self.listing(
             {"start": "2026-09-23", "end": "2026-09-24"}
@@ -124,13 +130,16 @@ class QueueExportsTests(TestCase):
             (today - timedelta(days=29)).isoformat(),
         )
 
-    def test_total_rows_is_summed(self):
+    def test_total_rows_counts_each_day_once(self):
         data = self.listing(
             {"start": "2026-09-22", "end": "2026-09-24"}
         ).json()
 
-        # 1 + 4 + 3 + 2
-        self.assertEqual(data["total_rows"], 10)
+        # Counting every FILE gives 1 + 4 + 3 + 2 = 10, which double
+        # counts 09-23 across its two revisions. Counting each day's
+        # CURRENT revision gives 1 + 4 + 2 = 7, which is the number of
+        # filings actually captured in the range.
+        self.assertEqual(data["total_rows"], 7)
 
     # ------------------------------------------------------------------
     # Validation
@@ -268,4 +277,101 @@ class QueueExportsTests(TestCase):
                 for p in self.queue.iterdir()
             ),
             before,
+        )
+
+class QueueCurrentRevisionTests(QueueFixtureMixin, TestCase):
+    """The newest revision of a day is marked current, older ones are not."""
+
+    def test_newest_revision_is_marked_current(self):
+        rows = self.listing(
+            {"start": "2026-09-23", "end": "2026-09-23"}
+        ).json()["files"]
+
+        by_name = {r["filename"]: r for r in rows}
+
+        self.assertTrue(by_name["2026-09-23.r2.csv"]["is_current"])
+        self.assertFalse(by_name["2026-09-23.csv"]["is_current"])
+
+    def test_a_day_with_one_file_is_current(self):
+        rows = self.listing(
+            {"start": "2026-09-22", "end": "2026-09-22"}
+        ).json()["files"]
+
+        self.assertTrue(rows[0]["is_current"])
+
+    def test_total_rows_counts_each_day_once(self):
+        # 09-22 has 2, 09-23 has 3 then 4 (current), 09-24 has 1.
+        # Counting every file would give 10; counting current gives 7.
+        data = self.listing(
+            {"start": "2026-09-22", "end": "2026-09-24"}
+        ).json()
+
+        self.assertEqual(data["total_rows"], 7)
+
+
+class QueueRegenerateTests(QueueFixtureMixin, TestCase):
+
+    REGEN_URL = "/api/queue/exports/regenerate/"
+
+    def regenerate(self, payload=None, client=None):
+        with override_settings(BASE_DIR=self.tmp):
+            return (client or self.client).post(
+                self.REGEN_URL,
+                payload or {},
+                format="json",
+            )
+
+    def test_regenerate_route_is_not_swallowed_by_the_filename_route(self):
+        # "regenerate" would match <str:filename> if the routes were
+        # declared the other way round, and 404.
+        self.assertNotEqual(
+            self.regenerate(
+                {"start": "2026-09-24", "end": "2026-09-24"}
+            ).status_code,
+            404,
+        )
+
+    def test_regenerate_returns_the_command_output(self):
+        response = self.regenerate(
+            {"start": "2026-09-24", "end": "2026-09-24"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["start"], "2026-09-24")
+        self.assertIsInstance(response.json()["output"], list)
+
+    def test_regenerate_never_overwrites_an_existing_file(self):
+        before = (self.queue / "2026-09-24.csv").read_text()
+
+        self.regenerate({"start": "2026-09-24", "end": "2026-09-24"})
+
+        self.assertEqual(
+            (self.queue / "2026-09-24.csv").read_text(),
+            before,
+        )
+
+    def test_malformed_date_is_rejected(self):
+        self.assertEqual(
+            self.regenerate({"start": "24-09-2026"}).status_code,
+            400,
+        )
+
+    def test_start_after_end_is_rejected(self):
+        self.assertEqual(
+            self.regenerate(
+                {"start": "2026-09-24", "end": "2026-09-22"}
+            ).status_code,
+            400,
+        )
+
+    def test_non_admin_cannot_regenerate(self):
+        client = APIClient()
+        client.force_authenticate(self.plain)
+
+        self.assertEqual(self.regenerate(client=client).status_code, 403)
+
+    def test_anonymous_cannot_regenerate(self):
+        self.assertEqual(
+            self.regenerate(client=APIClient()).status_code,
+            401,
         )

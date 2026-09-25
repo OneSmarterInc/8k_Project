@@ -24,6 +24,7 @@ from .filings import (
 )
 from .queue_exports import (
     queue_export_download,
+    queue_export_regenerate,
     queue_exports,
 )
 from .smtp import SMTPConfigView
@@ -46,6 +47,7 @@ __all__ = [
     "FilingPagination",
     "filings",
     "queue_exports",
+    "queue_export_regenerate",
     "queue_export_download",
     "SMTPConfigView",
     "ScheduleConfigView",

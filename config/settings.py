@@ -594,3 +594,68 @@ ENTRY_RULE = _env_str(
     "ENTRY_RULE",
     "T_PLUS_1",
 )
+
+
+# ---------------------------------------------------------------------
+# P-04: logging.
+#
+# Without this Django sends records to the console and nothing else. On
+# a laptop that is fine because someone is watching the terminal. On a
+# server a failure at 3am leaves nothing to read the next morning.
+#
+# The rotating file is the DURABLE history: 10 files at 10 MB is
+# roughly a month at this volume. It is deliberately separate from
+# watcher_latest.log, which the launcher truncates on every run and the
+# UI's log terminal streams - that file shows the CURRENT run, this one
+# keeps the record.
+#
+# logs/ is created at import time so a fresh checkout or a fresh server
+# does not fail on the first log write.
+# ---------------------------------------------------------------------
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": (
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+            ),
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_DIR / "watcher.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+            # delay=True so the file is only opened on the first write.
+            # Several processes import settings (runserver, the
+            # scheduler, each management command); without this they
+            # all grab a handle immediately, and on Windows that makes
+            # rotation fail with a sharing violation.
+            "delay": True,
+        },
+    },
+    "loggers": {
+        "watcher": {
+            "handlers": ["console", "file"],
+            "level": _env_str("WATCHER_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
