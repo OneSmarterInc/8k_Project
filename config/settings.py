@@ -518,6 +518,36 @@ CORS_ALLOWED_ORIGINS = _env_list(
     "http://localhost:5173,http://127.0.0.1:5173",
 )
 
+# P-05: allow the browser to send the session cookie on cross-origin
+# requests. Harmless same-origin (the Vite proxy locally, or a Vercel
+# rewrite in production); REQUIRED when the frontend is on a different
+# host than the API.
+CORS_ALLOW_CREDENTIALS = _env_bool("CORS_ALLOW_CREDENTIALS", False)
+
+
+# ---------------------------------------------------------------------
+# P-05: origins Django will accept a CSRF-protected POST from.
+#
+# Django compares the browser's Origin header against the request Host
+# plus this list. The Vite dev proxy sets changeOrigin, so Django sees
+# Host 127.0.0.1:8000 while the browser sends Origin
+# http://localhost:5173. Without both dev origins listed here, every
+# POST fails with "Origin checking failed" the moment
+# CSRF_ENFORCE_COOKIE_AUTH is switched on.
+#
+# The default covers local development only. Production MUST add its
+# own origin, for example:
+#   CSRF_TRUSTED_ORIGINS=https://watcher.vercel.app
+#
+# Entries need the scheme. "localhost:5173" on its own is rejected.
+# ---------------------------------------------------------------------
+
+CSRF_TRUSTED_ORIGINS = _env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "http://localhost:8000,http://127.0.0.1:8000",
+)
+
 # ---------------------------------------------------------------------
 # W-010: every API view requires a token by default.
 #
@@ -562,6 +592,22 @@ TOKEN_TTL_HOURS = _env_int("TOKEN_TTL_HOURS", 12)
 AUTH_COOKIE_NAME = _env_str("AUTH_COOKIE_NAME", "watcher_auth")
 AUTH_COOKIE_SAMESITE = _env_str("AUTH_COOKIE_SAMESITE", "Lax")
 AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", False)
+
+# P-05: enforce CSRF on cookie-authenticated unsafe methods.
+#
+# DRF's TokenAuthentication skips CSRF because a header token cannot be
+# sent automatically by a browser. A COOKIE token is sent automatically,
+# so that reasoning no longer holds.
+#
+# Defaults to False so applying the backend half alone changes nothing:
+# without it, every POST would 403 until the frontend starts sending
+# the token. Sequence is - apply backend, apply frontend, then set this
+# to True and verify in a browser.
+#
+# It is REQUIRED whenever AUTH_COOKIE_SAMESITE=None (a Vercel frontend
+# calling an AWS backend, for example). watcher.E002 fails
+# `check --deploy` if SameSite is None while this is off.
+CSRF_ENFORCE_COOKIE_AUTH = _env_bool("CSRF_ENFORCE_COOKIE_AUTH", False)
 
 
 # ---------------------------------------------------------------------

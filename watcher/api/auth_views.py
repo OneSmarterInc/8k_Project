@@ -7,6 +7,7 @@ POST /api/auth/logout/  -> deletes the caller's token
 """
 
 from django.contrib.auth import authenticate
+from django.views.decorators.csrf import ensure_csrf_cookie
 
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import (
@@ -86,3 +87,20 @@ def logout(request):
     response = Response({"status": "logged_out"})
 
     return clear_auth_cookie(response)
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+@ensure_csrf_cookie
+def csrf(request):
+    """
+    GET /api/auth/csrf/
+
+    P-05: hand the browser a csrftoken cookie so the axios client can
+    echo it back in X-CSRFToken on the first POST.
+
+    Called once at app start, before login. AllowAny by necessity: the
+    token is needed to log in. It is not a secret - its value only
+    proves the request came from a page the browser actually loaded
+    from this origin.
+    """
+    return Response({"detail": "CSRF cookie set."})

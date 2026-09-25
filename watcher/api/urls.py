@@ -18,6 +18,8 @@ from .views import (
 
 urlpatterns = [
     # W-010: token login
+    # P-05: issues the csrftoken cookie. Must be reachable before login.
+    path("auth/csrf/", auth_views.csrf, name="auth_csrf"),
     path("auth/login/", auth_views.login, name="auth_login"),
     path("auth/me/", auth_views.me, name="auth_me"),
     path("auth/logout/", auth_views.logout, name="auth_logout"),

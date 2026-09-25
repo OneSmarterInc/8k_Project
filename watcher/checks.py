@@ -110,17 +110,32 @@ def check_auth_cookie_security(app_configs, **kwargs):
 
     samesite = getattr(settings, "AUTH_COOKIE_SAMESITE", "Lax")
 
-    if str(samesite).lower() == "none":
+    csrf_enforced = getattr(
+        settings,
+        "CSRF_ENFORCE_COOKIE_AUTH",
+        False,
+    )
+
+    if str(samesite).lower() == "none" and not csrf_enforced:
+        # SameSite=None is legitimate - a Vercel frontend calling an
+        # AWS backend needs it. What is not legitimate is setting it
+        # while CSRF enforcement is off, because SameSite=Lax was the
+        # only thing protecting cookie-authenticated POSTs.
         problems.append(
             Error(
-                "AUTH_COOKIE_SAMESITE is None, which removes the only "
-                "CSRF protection on cookie-authenticated requests.",
+                "AUTH_COOKIE_SAMESITE is None while "
+                "CSRF_ENFORCE_COOKIE_AUTH is off. That removes the "
+                "only CSRF protection on cookie-authenticated "
+                "requests.",
                 hint=(
-                    "Keep SameSite=Lax, which the browser enforces by "
-                    "refusing to attach the cookie to cross-site "
-                    "requests. SameSite=None is only needed when the "
-                    "frontend is served from a different origin, and "
-                    "that needs real CSRF enforcement first (P-05)."
+                    "Either keep SameSite=Lax (correct when the "
+                    "frontend and API share a host, including behind a "
+                    "Vercel rewrite), or set "
+                    "CSRF_ENFORCE_COOKIE_AUTH=True so unsafe methods "
+                    "are CSRF-checked. A cross-origin deployment also "
+                    "needs AUTH_COOKIE_SECURE=True, "
+                    "CORS_ALLOW_CREDENTIALS=True and the frontend "
+                    "origin in CORS_ALLOWED_ORIGINS."
                 ),
                 id=UNSAFE_SAMESITE,
             )

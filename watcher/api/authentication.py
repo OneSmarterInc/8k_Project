@@ -14,9 +14,9 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 
-from rest_framework.authentication import TokenAuthentication
+from rest_framework.authentication import CSRFCheck, TokenAuthentication
 from rest_framework.authtoken.models import Token
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 
 def token_ttl():
@@ -73,6 +73,27 @@ def clear_auth_cookie(response):
     return response
 
 
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS", "TRACE")
+
+
+def enforce_csrf(request):
+    """
+    P-05: run Django's CSRF check on a cookie-authenticated request.
+
+    DRF's TokenAuthentication deliberately skips CSRF, because a token
+    in a HEADER cannot be attached by a browser to a cross-site
+    request. A token in a COOKIE is attached automatically, so that
+    exemption no longer applies.
+    """
+    check = CSRFCheck(lambda req: None)
+    check.process_request(request)
+
+    reason = check.process_view(request, None, (), {})
+
+    if reason:
+        raise PermissionDenied(f"CSRF failed: {reason}")
+
+
 class ExpiringTokenAuthentication(TokenAuthentication):
     """TokenAuthentication that also rejects tokens older than the TTL."""
 
@@ -88,7 +109,22 @@ class ExpiringTokenAuthentication(TokenAuthentication):
 
         if key:
             try:
-                return self.authenticate_credentials(key)
+                result = self.authenticate_credentials(key)
+
+                # P-05: only for cookie auth, only on unsafe methods,
+                # and only when switched on. The header path below is
+                # never CSRF-checked - a browser cannot forge it.
+                if (
+                    request.method not in SAFE_METHODS
+                    and getattr(
+                        settings,
+                        "CSRF_ENFORCE_COOKIE_AUTH",
+                        False,
+                    )
+                ):
+                    enforce_csrf(request)
+
+                return result
 
             except AuthenticationFailed:
                 # P-06: the cookie is stale, revoked or expired.
