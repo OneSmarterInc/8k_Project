@@ -25,6 +25,7 @@ from watcher.knowledge_base.models import FailureEvent
 from watcher.models import Filing, FilingChunk, FilingClassification
 from watcher.services.failure_tracking_service import FailureTrackingService
 
+from . import exhibits
 from .filing_text import build_filing_text
 from .parser import parse_response
 from .prompts import PROMPT_VERSION, build_prompt
@@ -92,12 +93,17 @@ def pending_filings():
 
 class InterpreterService:
 
-    def __init__(self, *, generator=None, threshold=None):
+    def __init__(self, *, generator=None, threshold=None, fetch_exhibits=None):
         self.generator = generator or OllamaGenerationService(
             model_name=os.getenv("INTERPRETER_MODEL") or None,
         )
         self.threshold = (
             review_threshold() if threshold is None else threshold
+        )
+        # EX-99 press releases (see exhibits.py). None = read the
+        # INTERPRETER_FETCH_EXHIBITS setting (default on).
+        self.fetch_exhibits = (
+            exhibits.fetch_enabled() if fetch_exhibits is None else fetch_exhibits
         )
         self._model_label = None
 
@@ -132,7 +138,14 @@ class InterpreterService:
         """
         text = self.build_input(filing)
         if text.is_empty:
+            # Not ingested yet: nothing to classify, and no SEC calls.
             return None
+
+        exhibit_status = exhibits.DISABLED
+        if self.fetch_exhibits:
+            exhibit_status = exhibits.ensure_press_release_exhibits(filing)
+            if exhibit_status == exhibits.FETCHED:
+                text = self.build_input(filing)
 
         prompt = build_prompt(filing, text.text, truncated=text.truncated)
 
@@ -170,6 +183,9 @@ class InterpreterService:
                 "max_tokens": MAX_ANSWER_TOKENS,
                 "json_mode": True,
                 "review_threshold": self.threshold,
+                # present | fetched | none_on_sec | failed | disabled
+                "exhibits": exhibit_status,
+                "input_documents": text.documents,
             },
             is_material=data.get("is_material"),
             category=data.get("category", ""),

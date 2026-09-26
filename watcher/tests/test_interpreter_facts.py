@@ -2,7 +2,7 @@
 
 import json
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from watcher.interpreter import parser as P
 from watcher.interpreter.facts import clean_facts, event_date, format_amounts
@@ -31,6 +31,8 @@ AIG_ANSWER = json.dumps({
 })
 
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class CleanFactsTests(TestCase):
 
     def test_keeps_valid_values(self):
@@ -71,6 +73,8 @@ class CleanFactsTests(TestCase):
         self.assertIsNone(event_date({}))
 
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class AigCaseTests(TestCase):
 
     def test_parser_keeps_both_euro_tranches(self):

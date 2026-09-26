@@ -101,6 +101,8 @@ def register(n, form="8-K", with_text=True, ticker="TEST"):
 # Ollama service: existing callers must be unaffected
 # ----------------------------------------------------------------------
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class OllamaServiceTests(TestCase):
 
     def _service(self):
@@ -154,6 +156,8 @@ class OllamaServiceTests(TestCase):
 # Parser
 # ----------------------------------------------------------------------
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class ParserTests(TestCase):
 
     def test_clean_answer(self):
@@ -197,6 +201,8 @@ class ParserTests(TestCase):
 # Service
 # ----------------------------------------------------------------------
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class ServiceTests(TestCase):
 
     def setUp(self):
@@ -345,6 +351,8 @@ class ServiceTests(TestCase):
 # Command
 # ----------------------------------------------------------------------
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class CommandTests(TestCase):
 
     def setUp(self):
@@ -448,6 +456,8 @@ class CommandTests(TestCase):
 # Review queue API
 # ----------------------------------------------------------------------
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class ReviewApiTests(TestCase):
 
     def setUp(self):

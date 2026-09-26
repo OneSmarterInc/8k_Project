@@ -31,6 +31,8 @@ from watcher.services.notification_service import FilingNotificationService
 from .test_interpreter import FakeGenerator, answer, register
 
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class PipelineStepTests(TestCase):
 
     def setUp(self):
@@ -178,6 +180,8 @@ class PipelineStepTests(TestCase):
         self.assertIn(self.filing.id, ids({}))
 
 
+# These tests never call SEC; exhibit fetching has its own tests.
+@override_settings(INTERPRETER_FETCH_EXHIBITS=False)
 class EmailContentTests(TestCase):
     """The real email builders, not mocks."""
 
