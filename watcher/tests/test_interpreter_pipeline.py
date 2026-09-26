@@ -213,7 +213,7 @@ class EmailContentTests(TestCase):
         self.assertIn("INTERPRETER (model label, unverified)", text)
         self.assertIn("Category: FINANCING", text)
         self.assertIn("Amount: $625,000,000", text)
-        self.assertIn("Effective Date: N/A", text)
+        self.assertIn("Event Date: N/A", text)
         self.assertLess(text.index("Summary text."), text.index("INTERPRETER"))
 
         html = FilingNotificationService._build_html_body(**self._kwargs(interpretation=self.BLOCK))

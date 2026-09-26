@@ -138,6 +138,9 @@ class FilingSerializer(serializers.ModelSerializer):
             "item_codes_match",
             "flag",
             "flag_reason",
+            # Read-only. Lets View Mail tell whether the Interpreter result
+            # existed when the email went out.
+            "email_sent_at",
             # "candidate_originals",
             "failure_stage",
             "failure_code",

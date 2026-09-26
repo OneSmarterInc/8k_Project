@@ -14,6 +14,7 @@ import math
 
 from watcher.services.item_codes import format_item_codes
 
+from .facts import clean_facts
 from .taxonomy import is_valid_category
 
 
@@ -44,11 +45,6 @@ def _extract_json_text(raw):
 
     return text
 
-
-def _clean_facts(value):
-    if not isinstance(value, dict):
-        return {}
-    return {str(k): v for k, v in value.items()}
 
 
 def _clean_items(value):
@@ -92,7 +88,7 @@ def parse_response(raw):
         "confidence": float(confidence),
         "reasoning": str(data.get("reasoning") or "")[:2000],
         "body_item_numbers": _clean_items(data.get("body_item_numbers")),
-        "extracted_facts": _clean_facts(data.get("extracted_facts")),
+        "extracted_facts": clean_facts(data.get("extracted_facts")),
     }
 
     if not isinstance(is_material, bool):

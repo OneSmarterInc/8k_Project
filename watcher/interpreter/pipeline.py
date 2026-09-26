@@ -22,6 +22,7 @@ import os
 
 from django.conf import settings
 
+from .facts import event_date, format_amounts
 from .service import INTERPRETABLE_FORMS, InterpreterService
 
 
@@ -56,8 +57,10 @@ def email_block(row):
             f"{row.confidence:.2f}" if row.confidence is not None else "N/A"
         ),
         "counterparty": facts.get("counterparty"),
-        "amount_usd": facts.get("amount_usd"),
-        "effective_date": facts.get("effective_date"),
+        # Pre-formatted text, e.g. "EUR 625,000,000 (2031 Notes)".
+        # Works for both the 1.0.2 "amounts" list and older amount_usd.
+        "amount_usd": format_amounts(facts),
+        "effective_date": event_date(facts),
         "status": (
             "Sent to Review Queue (Classification)"
             if row.needs_human_review

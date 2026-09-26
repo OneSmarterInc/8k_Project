@@ -280,8 +280,20 @@ class ServiceTests(TestCase):
         self.assertIn("BODY", prompt)
         self.assertIn("truncated", prompt)
 
-    def test_current_prompt_is_1_0_1(self):
-        self.assertEqual(PROMPT_VERSION, "1.0.1")
+    def test_current_prompt_is_1_0_2(self):
+        self.assertEqual(PROMPT_VERSION, "1.0.2")
+
+    def test_prompt_1_0_2_asks_for_currency_amounts_and_dates(self):
+        prompt = build_prompt(self.filing, "BODY")
+        self.assertIn('"amounts"', prompt)
+        self.assertIn("Never convert between", prompt)
+        self.assertIn('"event_date"', prompt)
+        self.assertNotIn('"amount_usd"', prompt)
+
+    def test_prompt_1_0_1_kept_unchanged(self):
+        from watcher.interpreter.prompts import v1_0_1
+        self.assertEqual(v1_0_1.PROMPT_VERSION, "1.0.1")
+        self.assertIn('"amount_usd"', v1_0_1.system_prompt())
 
     def test_prompt_demands_real_confidence_for_routine(self):
         prompt = build_prompt(self.filing, "BODY")
@@ -290,8 +302,9 @@ class ServiceTests(TestCase):
         # The routine example in the prompt itself carries a real score
         # and parses cleanly.
         start = prompt.index("Example of a routine answer:")
-        example = prompt[start:prompt.index("}\n\nUse null", start) + 1]
-        data, code = P.parse_response(example.split(":", 1)[1])
+        end = prompt.index("=== FILING ===", start)
+        example = prompt[start:end].split(":", 1)[1].strip()
+        data, code = P.parse_response(example)
         self.assertIsNone(code)
         self.assertFalse(data["is_material"])
         self.assertGreaterEqual(data["confidence"], 0.7)
@@ -309,7 +322,7 @@ class ServiceTests(TestCase):
             threshold=0.7,
         ).classify(self.filing)
         self.assertFalse(row.needs_human_review)
-        self.assertEqual(row.prompt_version, "1.0.1")
+        self.assertEqual(row.prompt_version, PROMPT_VERSION)
 
     def test_new_prompt_version_makes_filings_pending_again(self):
         old = FilingClassification.objects.create(
@@ -539,6 +552,17 @@ class ReviewApiTests(TestCase):
         self.assertEqual(self._override(self.staff, older).status_code, 409)
         missing = FilingClassification(id=999999)
         self.assertEqual(self._override(self.staff, missing).status_code, 404)
+
+    def test_email_sent_at_exposed_read_only(self):
+        from django.utils import timezone
+        self.low.email_sent_at = timezone.now()
+        self.low.save(update_fields=["email_sent_at"])
+        rows = self._client(self.staff).get(reverse("filings")).json()["results"]
+        by_id = {row["id"]: row for row in rows}
+        self.assertIsNotNone(by_id[self.low.id]["email_sent_at"])
+        self.assertIsNone(by_id[self.high.id]["email_sent_at"])
+        # The Interpreter row's time is present so View Mail can compare.
+        self.assertIsNotNone(by_id[self.low.id]["interpretation"]["created_at"])
 
     def test_taxonomy_endpoint(self):
         body = self._client(self.reader).get(reverse("taxonomy")).json()

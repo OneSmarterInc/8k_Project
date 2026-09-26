@@ -150,7 +150,7 @@ class FilingNotificationService:
             ("Confidence", "confidence", None),
             ("Counterparty", "counterparty", None),
             ("Amount", "amount_usd", amount),
-            ("Effective Date", "effective_date", None),
+            ("Event Date", "effective_date", None),
         ):
             if key in interpretation:
                 rows.append((
