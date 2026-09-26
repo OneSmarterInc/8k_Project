@@ -12,6 +12,8 @@ from .views import (
     run_logs,
     runs,
     trigger_run,
+    audit_disagreements,
+    audit_summary,
     labelling_labels,
     labelling_next,
     override_classification,
@@ -135,5 +137,17 @@ urlpatterns = [
         "settings/schedule/",
         ScheduleConfigView.as_view(),
         name="schedule_config",
+    ),
+
+    # Auditor reporting (read-only; manage.py audit does the writing).
+    path(
+        "audit/summary/",
+        audit_summary,
+        name="audit_summary",
+    ),
+    path(
+        "audit/disagreements/",
+        audit_disagreements,
+        name="audit_disagreements",
     ),
 ]

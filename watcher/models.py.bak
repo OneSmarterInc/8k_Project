@@ -1,7 +1,4 @@
 from watcher.knowledge_base.models import (
-    AuditSample,
-    AuditWindow,
-    AuditorRun,
     AutomationRun,
     BackupCode,
     ChunkEmbedding,
@@ -47,9 +44,6 @@ __all__ = [
     "ClassificationOverride",
     "FilingClassification",
     "InterpreterRun",
-    "AuditSample",
-    "AuditWindow",
-    "AuditorRun",
     "ScheduleConfig",
     "SMTPConfig",
 ]
