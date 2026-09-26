@@ -28,6 +28,16 @@ from .queue_exports import (
     queue_exports,
 )
 from .smtp import SMTPConfigView
+# Guide Part 5: Interpreter review.
+from .classifications import (
+    override_classification,
+    taxonomy,
+)
+# Guide 4.2: labelling screen API.
+from .labelling import (
+    labelling_labels,
+    labelling_next,
+)
 from .schedule import ScheduleConfigView
 
 # Re-exported for backward compatibility only. Existing code patches
@@ -52,4 +62,8 @@ __all__ = [
     "SMTPConfigView",
     "ScheduleConfigView",
     "SubprocessWatcherLauncher",
+    "labelling_next",
+    "labelling_labels",
+    "override_classification",
+    "taxonomy",
 ]

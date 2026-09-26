@@ -38,6 +38,7 @@ class FilingEmailService:
         source_url,
         metadata=None,
         item_verification=None,
+        interpretation=None,
     ):
         summary_text = str(
             summary_result.summary
@@ -115,11 +116,19 @@ class FilingEmailService:
 
         # ---------------------------------------------------------
         # Existing notification service.
+        #
+        # `interpretation` (Interpreter step, optional) is only passed
+        # when present, so the call is unchanged when the step is off.
         # ---------------------------------------------------------
+
+        extra = {}
+        if interpretation is not None:
+            extra["interpretation"] = interpretation
 
         return (
             self.notification_service
             .send_new_filing_notification(
+                **extra,
                 ticker=(
                     summary_result.ticker
                 ),

@@ -12,6 +12,10 @@ from .views import (
     run_logs,
     runs,
     trigger_run,
+    labelling_labels,
+    labelling_next,
+    override_classification,
+    taxonomy,
 )
 
 
@@ -104,6 +108,28 @@ urlpatterns = [
         "settings/smtp/",
         SMTPConfigView.as_view(),
         name="smtp_config",
+    ),
+    # Guide Part 5: Interpreter review queue (staff only).
+    path(
+        "classifications/<int:classification_id>/override/",
+        override_classification,
+        name="override_classification",
+    ),
+    path(
+        "taxonomy/",
+        taxonomy,
+        name="taxonomy",
+    ),
+    # Guide 4.2: blind labelling for ground truth (G2).
+    path(
+        "labelling/next/",
+        labelling_next,
+        name="labelling_next",
+    ),
+    path(
+        "labelling/labels/",
+        labelling_labels,
+        name="labelling_labels",
     ),
     path(
         "settings/schedule/",

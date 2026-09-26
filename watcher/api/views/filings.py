@@ -5,7 +5,7 @@ unchanged.
 """
 
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.shortcuts import get_object_or_404
 
 from rest_framework.decorators import (
@@ -17,7 +17,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
 from watcher.models import Filing
-from watcher.knowledge_base.models import FailureEvent
+from watcher.knowledge_base.models import FailureEvent, FilingClassification
 # 8-K/A DISABLED: amendment linking removed.
 # from watcher.knowledge_base.ingestion.amendment_linker import (
 #     AMBIGUOUS_AMENDMENT_TARGET,
@@ -50,6 +50,9 @@ def filings(request):
         summarized  - previous default: summary exists, no unresolved failure.
         failed      - unresolved failures only.
         review      - failures + ambiguous 8-K/A (Review Queue, W-022).
+        classification_review
+                    - staff only: filings whose LATEST Interpreter
+                      classification needs a human and has no override.
         flagged     - filings the Watcher flagged (flag=True).
         all         - every captured filing.
     """
@@ -71,6 +74,17 @@ def filings(request):
                     .order_by("-created_at")
                 ),
                 to_attr="prefetched_unresolved_failures",
+            ),
+            # Interpreter: one batched query feeds the `interpretation`
+            # field (staff only). Adds no per-row queries.
+            Prefetch(
+                "classifications",
+                queryset=(
+                    FilingClassification.objects
+                    .select_related("override", "override__reviewer")
+                    .order_by("-created_at", "-id")
+                ),
+                to_attr="prefetched_classifications",
             ),
         )
         .order_by("-created_at", "-id")
@@ -106,6 +120,32 @@ def filings(request):
             #     ),
             # )
         ).distinct()
+
+    elif status_param == "classification_review":
+        # Separate from "review" on purpose: "review" already means
+        # unresolved failures, and reusing it would mix the two tabs.
+        if not request.user.is_staff:
+            return Response(
+                {"detail": "Classification review is for staff only."},
+                status=403,
+            )
+
+        latest_id = (
+            FilingClassification.objects
+            .filter(filing_id=OuterRef("filing_id"))
+            .order_by("-created_at", "-id")
+            .values("id")[:1]
+        )
+        needs_review = (
+            FilingClassification.objects
+            .filter(
+                id=Subquery(latest_id),
+                needs_human_review=True,
+                override__isnull=True,
+            )
+            .values("filing_id")
+        )
+        queryset = queryset.filter(id__in=needs_review)
 
     elif status_param == "summarized":
         queryset = queryset.filter(
@@ -158,7 +198,11 @@ def filings(request):
     page = paginator.paginate_queryset(queryset, request)
 
     return paginator.get_paginated_response(
-        FilingSerializer(page, many=True).data
+        FilingSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        ).data
     )
 
 

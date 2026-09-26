@@ -31,6 +31,42 @@ class CompanySerializer(serializers.ModelSerializer):
         ]
 
 
+def serialize_classification(row):
+    """Plain dict for one FilingClassification (+ its override)."""
+    if row is None:
+        return None
+
+    try:
+        override = row.override
+    except Exception:
+        override = None
+
+    return {
+        "id": row.id,
+        "is_material": row.is_material,
+        "category": row.category or None,
+        "confidence": row.confidence,
+        "reasoning": row.reasoning,
+        "extracted_facts": row.extracted_facts,
+        "body_item_numbers": row.body_item_numbers,
+        "needs_human_review": row.needs_human_review,
+        "failure_code": row.failure_code or None,
+        "input_truncated": row.input_truncated,
+        "taxonomy_version": row.taxonomy_version,
+        "prompt_version": row.prompt_version,
+        "model_name": row.model_name,
+        "created_at": row.created_at,
+        "override": None if override is None else {
+            "id": override.id,
+            "is_material": override.is_material,
+            "category": override.category or None,
+            "note": override.note,
+            "reviewer": override.reviewer.get_username(),
+            "created_at": override.created_at,
+        },
+    }
+
+
 class FilingSerializer(serializers.ModelSerializer):
 
     ticker = serializers.CharField(
@@ -56,6 +92,13 @@ class FilingSerializer(serializers.ModelSerializer):
     summary = serializers.SerializerMethodField()
 
     classification = serializers.SerializerMethodField()
+
+    # Interpreter output (guide Part 5). A NEW field on purpose: the
+    # frontend already reads `classification` as a string and calls
+    # .toLowerCase() on it, so an object there would crash the Filings
+    # page. Staff only, so labellers can never see model output
+    # (guide 4.2: a labeller never sees any model output).
+    interpretation = serializers.SerializerMethodField()
 
     failure_stage = serializers.SerializerMethodField()
     failure_code = serializers.SerializerMethodField()
@@ -88,6 +131,7 @@ class FilingSerializer(serializers.ModelSerializer):
             "created_at",
             "summary",
             "classification",
+            "interpretation",
             # "amends_accession",
             # "amended_by_accession",
             "sec_item_codes",
@@ -119,6 +163,25 @@ class FilingSerializer(serializers.ModelSerializer):
     def get_classification(self, obj):
         # Classification remains intentionally non-hardcoded.
         return None
+
+    def get_interpretation(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not (user and user.is_authenticated and user.is_staff):
+            return None
+
+        prefetched = getattr(obj, "prefetched_classifications", None)
+        if prefetched is not None:
+            latest = prefetched[0] if prefetched else None
+        else:
+            latest = (
+                obj.classifications
+                .select_related("override", "override__reviewer")
+                .order_by("-created_at", "-id")
+                .first()
+            )
+
+        return serialize_classification(latest)
 
     def _get_active_failure(self, obj):
         if not hasattr(

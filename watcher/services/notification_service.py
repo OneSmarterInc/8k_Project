@@ -124,6 +124,74 @@ class FilingNotificationService:
 
         return ", ".join(values)
 
+    # ---------------------------------------------------------
+    # Interpreter block (optional). Returns nothing when absent, so
+    # the email is unchanged unless the Interpreter step ran.
+    # ---------------------------------------------------------
+
+    INTERPRETATION_TITLE = "INTERPRETER (model label, unverified)"
+
+    @staticmethod
+    def _interpretation_rows(interpretation):
+        if not interpretation:
+            return []
+
+        def show(value):
+            return "N/A" if value in (None, "") else value
+
+        amount = interpretation.get("amount_usd")
+        if isinstance(amount, (int, float)) and not isinstance(amount, bool):
+            amount = f"${amount:,.0f}"
+
+        rows = []
+        for label, key, value in (
+            ("Material", "material", None),
+            ("Category", "category", None),
+            ("Confidence", "confidence", None),
+            ("Counterparty", "counterparty", None),
+            ("Amount", "amount_usd", amount),
+            ("Effective Date", "effective_date", None),
+        ):
+            if key in interpretation:
+                rows.append((
+                    label,
+                    show(value if value is not None else interpretation.get(key)),
+                ))
+        rows.append(("Status", show(interpretation.get("status"))))
+        return rows
+
+    @classmethod
+    def _interpretation_text(cls, interpretation):
+        rows = cls._interpretation_rows(interpretation)
+        if not rows:
+            return []
+        return [
+            "",
+            "",
+            cls.INTERPRETATION_TITLE,
+            "-" * 60,
+            *[f"{label}: {value}" for label, value in rows],
+        ]
+
+    @classmethod
+    def _interpretation_html(cls, interpretation):
+        rows = cls._interpretation_rows(interpretation)
+        if not rows:
+            return ""
+        from django.utils.html import escape
+
+        cells = "".join(
+            f'''<div class="detail-row">
+                            <div class="detail-label">{escape(label)}</div>
+                            <div class="detail-value">{escape(str(value))}</div>
+                        </div>'''
+            for label, value in rows
+        )
+        return (
+            f'<div class="section-title">{escape(cls.INTERPRETATION_TITLE)}</div>'
+            f'<div class="details-grid">{cells}</div>'
+        )
+
     @classmethod
     def _build_body(
         cls,
@@ -142,6 +210,7 @@ class FilingNotificationService:
         item_verification_status,
         company_verification_status,
         manual_audit_status,
+        interpretation=None,
     ):
         """
         Build the plain-text SEC filing notification email.
@@ -232,6 +301,7 @@ class FilingNotificationService:
                 "FILING SUMMARY",
                 "-" * 60,
                 clean_summary,
+                *cls._interpretation_text(interpretation),
                 "",
                 "",
                 "SOURCE INFORMATION",
@@ -272,6 +342,7 @@ class FilingNotificationService:
         item_verification_status,
         company_verification_status,
         manual_audit_status,
+        interpretation=None,
     ):
         """
         Build the HTML version of the SEC filing notification email.
@@ -434,6 +505,7 @@ class FilingNotificationService:
                     <div class="summary-box">
                         {summary_html}
                     </div>
+                    {cls._interpretation_html(interpretation)}
 
                     <div style="text-align: center; margin-top: 32px;">
                         <a href="{sec_url or '#'}" class="btn">View on SEC EDGAR</a>
@@ -465,6 +537,7 @@ class FilingNotificationService:
         item_verification_status=None,
         company_verification_status=None,
         manual_audit_status=None,
+        interpretation=None,
     ):
         """
         Send one filing summary notification.
@@ -595,6 +668,7 @@ class FilingNotificationService:
             manual_audit_status=(
                 manual_audit_status
             ),
+            interpretation=interpretation,
         )
 
         # ---------------------------------------------------------
@@ -618,6 +692,7 @@ class FilingNotificationService:
             item_verification_status=item_verification_status,
             company_verification_status=company_verification_status,
             manual_audit_status=manual_audit_status,
+            interpretation=interpretation,
         )
 
         email = EmailMultiAlternatives(

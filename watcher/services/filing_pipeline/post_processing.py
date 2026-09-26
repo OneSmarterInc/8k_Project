@@ -10,7 +10,13 @@ class FilingPostProcessingService:
     Preserve the established post-registration flow:
 
         index -> item verification -> summary -> email
+
+    Optional (INTERPRETER_IN_PIPELINE, off by default):
+
+        ... -> summary -> interpreter -> email
     """
+
+    _DEFAULT = object()
 
     def __init__(
         self,
@@ -23,7 +29,15 @@ class FilingPostProcessingService:
         email_service,
         notification_service,
         output_service,
+        interpreter_step=_DEFAULT,
     ):
+        # interpreter_step: None disables the step; the default reads
+        # INTERPRETER_IN_PIPELINE, so existing callers need no change.
+        if interpreter_step is self._DEFAULT:
+            from watcher.interpreter.pipeline import default_step
+            interpreter_step = default_step()
+        self.interpreter_step = interpreter_step
+
         self.auto_index = bool(auto_index)
         self.daily_chronicle = bool(daily_chronicle)
 
@@ -217,6 +231,17 @@ class FilingPostProcessingService:
 
 
         # -------------------------
+        # INTERPRETER (optional)
+        # -------------------------
+        interpretation = self._run_interpreter(
+            registered_filing=registered_filing,
+            form=form,
+            accession_number=accession_number,
+            result=result,
+        )
+
+
+        # -------------------------
         # EMAIL
         # -------------------------
         email_attempted = False
@@ -241,15 +266,22 @@ class FilingPostProcessingService:
 
                 email_attempted = True
 
+                email_kwargs = dict(
+                    summary_result=summary_result,
+                    filename=filename,
+                    saved_path=saved_path,
+                    source_url=source_url,
+                    metadata=metadata,
+                    item_verification=item_verification,
+                )
+
+                # Only passed when the Interpreter step ran, so with the
+                # step off the call is exactly what it was before.
+                if interpretation is not None:
+                    email_kwargs["interpretation"] = interpretation
+
                 email_sent = (
-                    self.email_service.send(
-                        summary_result=summary_result,
-                        filename=filename,
-                        saved_path=saved_path,
-                        source_url=source_url,
-                        metadata=metadata,
-                        item_verification=item_verification,
-                    )
+                    self.email_service.send(**email_kwargs)
                 )
 
             else:
@@ -320,3 +352,74 @@ class FilingPostProcessingService:
         self.output.finish()
 
         return result
+
+    def _run_interpreter(
+        self,
+        *,
+        registered_filing,
+        form,
+        accession_number,
+        result,
+    ):
+        """
+        Classify just this filing. Never raises and never stops the
+        pipeline. Returns the email block dict, or None when the step is
+        off or does not apply (then nothing is printed at all).
+        """
+        step = self.interpreter_step
+
+        if step is None or not step.applies_to(form):
+            return None
+
+        from watcher.interpreter.pipeline import (
+            FAILED_EMAIL_BLOCK,
+            email_block,
+        )
+
+        try:
+            row = step.classify(registered_filing)
+
+        except Exception as exc:
+            result["errors"].append(
+                "Interpreter failed for "
+                f"{accession_number}: {exc}"
+            )
+
+            self.output.status(
+                "INTERPRETER",
+                f"FAILED ({exc})",
+            )
+
+            try:
+                FailureTrackingService.record(
+                    filing=registered_filing,
+                    stage=FailureEvent.Stage.INTERPRETER,
+                    code=FailureEvent.Code.INTERPRETER_FAILED,
+                    message=str(exc),
+                )
+            except Exception:
+                # Recording must never break the pipeline either.
+                pass
+
+            return dict(FAILED_EMAIL_BLOCK)
+
+        if row is None:
+            self.output.status(
+                "INTERPRETER",
+                "SKIPPED (no text to classify)",
+            )
+            return None
+
+        block = email_block(row)
+
+        self.output.status(
+            "INTERPRETER",
+            f"{block['category']} {block['confidence']}"
+            + (
+                " -> REVIEW"
+                if row.needs_human_review
+                else ""
+            ),
+        )
+
+        return block

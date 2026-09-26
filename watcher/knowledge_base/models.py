@@ -792,6 +792,9 @@ class FailureEvent(models.Model):
         SUMMARY = "summary", "Summary"
         EMAIL = "email", "Email"
         INGESTION = "ingestion", "Ingestion"
+        # Guide Part 5: Interpreter step inside the Watcher pipeline
+        # (only when INTERPRETER_IN_PIPELINE is on).
+        INTERPRETER = "interpreter", "Interpreter"
 
 
     class Code(models.TextChoices):
@@ -827,6 +830,10 @@ class FailureEvent(models.Model):
         INGESTION_FAILED = (
             "ingestion_failed",
             "Ingestion Failed",
+        )
+        INTERPRETER_FAILED = (
+            "interpreter_failed",
+            "Interpreter Failed",
         )
 
 
@@ -971,3 +978,275 @@ class BackupCode(models.Model):
 
     def __str__(self):
         return f"Backup code for {self.user}"
+
+# ======================================================================
+# Guide Part 4 (G2): ground truth.
+#
+# Additive only. These tables are read by nothing in the Watcher's run
+# path and change no existing table.
+# ======================================================================
+
+
+class LabellingSample(models.Model):
+    """
+    Guide 4.2: the fixed, randomly drawn set of filings to be labelled.
+
+    Labellers never choose what they label. The sample is drawn once by
+    `python manage.py build_labelling_sample`, stratified by item code so
+    rare items are represented, and served in `position` order.
+
+    required_labels = 2 marks the double-labelled subset used for kappa.
+    """
+
+    filing = models.OneToOneField(
+        Filing,
+        on_delete=models.CASCADE,
+        related_name="labelling_sample",
+    )
+
+    stratum = models.CharField(
+        max_length=32,
+        blank=True,
+        help_text="Primary item code the filing was sampled under.",
+    )
+
+    required_labels = models.PositiveSmallIntegerField(default=1)
+
+    position = models.PositiveIntegerField(db_index=True)
+
+    taxonomy_version = models.CharField(max_length=20)
+
+    # Soft claim so two labellers are not handed the same single-label
+    # filing at the same moment. Expires; never blocks a double-label slot.
+    claimed_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position"]
+
+    def __str__(self):
+        return f"Sample {self.position}: filing {self.filing_id}"
+
+
+class GroundTruthLabel(models.Model):
+    """
+    G2: one human's judgement on one filing. Two labellers on the same
+    filing produce two rows - that is the point, it is how kappa is
+    measured. Never overwrite; a correction is a new row with
+    supersedes set.
+    """
+
+    filing = models.ForeignKey(
+        Filing,
+        on_delete=models.CASCADE,
+        related_name="ground_truth_labels",
+    )
+    labeller = models.ForeignKey(
+        "auth.User",
+        on_delete=models.PROTECT,
+        related_name="ground_truth_labels",
+    )
+
+    taxonomy_version = models.CharField(max_length=20)
+
+    is_material = models.BooleanField()
+    category = models.CharField(max_length=40, blank=True)  # blank when routine
+
+    confidence = models.PositiveSmallIntegerField()  # 1-5, the human's own
+    notes = models.TextField(blank=True)
+
+    supersedes = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="superseded_by",
+    )
+
+    labelled_at = models.DateTimeField(auto_now_add=True)
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["filing", "labeller"])]
+
+    def __str__(self):
+        return (
+            f"Label {self.id}: filing {self.filing_id} "
+            f"by {self.labeller_id} -> {self.category or 'ROUTINE'}"
+        )
+
+
+class GroundTruthSplit(models.Model):
+    """
+    Guide 4.4: train / test / sealed, recorded in the database.
+    Written by the Phase 3 split command; created now so the schema for
+    Part 4 lands in one migration.
+    """
+
+    class Split(models.TextChoices):
+        TRAIN = "train", "Train"
+        TEST = "test", "Test"
+        SEALED = "sealed", "Sealed"
+
+    filing = models.OneToOneField(
+        Filing,
+        on_delete=models.CASCADE,
+        related_name="ground_truth_split",
+    )
+    split = models.CharField(max_length=10, choices=Split.choices)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"filing {self.filing_id}: {self.split}"
+
+
+# ======================================================================
+# Guide Part 5 (G3): the Interpreter.
+#
+# Additive only. InterpreterRun is deliberately NOT AutomationRun: the
+# Watcher's stale-run cleanup marks every RUNNING AutomationRun FAILED
+# whenever the Watcher lock is free, and a RUNNING row would block
+# "Trigger run". Interpreter failures are recorded on these rows, NOT as
+# FailureEvent, because an unresolved FailureEvent hides a filing from
+# the main Filings page.
+# ======================================================================
+
+
+class InterpreterRun(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        PARTIAL = "partial", "Partial"
+        FAILED = "failed", "Failed"
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.RUNNING,
+    )
+
+    taxonomy_version = models.CharField(max_length=20)
+    prompt_version = models.CharField(max_length=20)
+    model_name = models.CharField(max_length=200)
+
+    filings_selected = models.PositiveIntegerField(default=0)
+    classified_count = models.PositiveIntegerField(default=0)
+    review_count = models.PositiveIntegerField(default=0)
+    skipped_count = models.PositiveIntegerField(default=0)
+    error_count = models.PositiveIntegerField(default=0)
+
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"InterpreterRun {self.id} - {self.status}"
+
+
+class FilingClassification(models.Model):
+    """
+    G3: one Interpreter judgement on one filing.
+
+    Append-only. A new taxonomy version, prompt version or model
+    produces a NEW row, never an update. Without that you cannot answer
+    "what did the classifier say in March?", and every accuracy number
+    becomes unreproducible.
+    """
+
+    filing = models.ForeignKey(
+        Filing,
+        on_delete=models.CASCADE,
+        related_name="classifications",
+    )
+    run = models.ForeignKey(
+        InterpreterRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="classifications",
+    )
+
+    # Provenance: all four are needed to reproduce a result.
+    taxonomy_version = models.CharField(max_length=20)
+    prompt_version = models.CharField(max_length=20)
+    model_name = models.CharField(max_length=200)   # tag@digest when known
+    model_options = models.JSONField(default=dict)
+
+    is_material = models.BooleanField(null=True)
+    category = models.CharField(max_length=40, blank=True)
+    confidence = models.FloatField(null=True)        # 0.0 - 1.0
+    reasoning = models.TextField(blank=True)
+
+    body_item_numbers = models.CharField(max_length=200, blank=True)
+    extracted_facts = models.JSONField(default=dict)
+
+    needs_human_review = models.BooleanField(default=False)
+    # Blank when the answer parsed cleanly. Otherwise why it went to a
+    # human: UNPARSEABLE_RESPONSE, UNKNOWN_CATEGORY, INVALID_CONFIDENCE,
+    # INVALID_MATERIALITY, MISSING_CATEGORY, INCONSISTENT_ANSWER.
+    failure_code = models.CharField(max_length=40, blank=True)
+    raw_response = models.TextField(blank=True)      # verbatim, for debugging
+
+    input_sha256 = models.CharField(max_length=64)   # exact text classified
+    input_truncated = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["filing", "-created_at"]),
+            models.Index(fields=["taxonomy_version", "prompt_version"]),
+            models.Index(fields=["needs_human_review"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Classification {self.id}: filing {self.filing_id} -> "
+            f"{self.category or ('ROUTINE' if self.is_material is False else '?')}"
+        )
+
+
+class ClassificationOverride(models.Model):
+    """
+    A reviewer's decision on one classification.
+
+    A separate row, so the model's original answer is never edited and
+    the Auditor can count how often the model was wrong. One per
+    classification: the first reviewer wins, a second gets 409.
+    """
+
+    classification = models.OneToOneField(
+        FilingClassification,
+        on_delete=models.CASCADE,
+        related_name="override",
+    )
+    reviewer = models.ForeignKey(
+        "auth.User",
+        on_delete=models.PROTECT,
+        related_name="classification_overrides",
+    )
+
+    taxonomy_version = models.CharField(max_length=20)
+    is_material = models.BooleanField()
+    category = models.CharField(max_length=40, blank=True)
+    note = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return (
+            f"Override of {self.classification_id} -> "
+            f"{self.category or 'ROUTINE'}"
+        )

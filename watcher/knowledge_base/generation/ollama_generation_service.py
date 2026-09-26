@@ -38,7 +38,16 @@ class OllamaGenerationService:
         *,
         temperature=0.0,
         max_tokens=512,
+        seed=None,
+        top_p=None,
+        num_ctx=None,
+        json_mode=False,
     ) -> str:
+        """
+        seed / top_p / num_ctx / json_mode were added for the Interpreter
+        (guide 5.3: determinism). They default to "not sent", so every
+        existing caller produces exactly the same request as before.
+        """
 
         prompt = str(prompt or "").strip()
 
@@ -47,24 +56,34 @@ class OllamaGenerationService:
                 "Generation prompt cannot be empty."
             )
 
+        options = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": 16384 if num_ctx is None else num_ctx,
+        }
+        if seed is not None:
+            options["seed"] = seed
+        if top_p is not None:
+            options["top_p"] = top_p
+
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+
+            # Qwen3 should answer directly rather than
+            # spending time on an internal thinking pass.
+            "think": False,
+
+            "options": options,
+        }
+        if json_mode:
+            payload["format"] = "json"
+
         try:
             response = self.session.post(
                 f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": prompt,
-                    "stream": False,
-
-                    # Qwen3 should answer directly rather than
-                    # spending time on an internal thinking pass.
-                    "think": False,
-
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                        "num_ctx": 16384,
-                    },
-                },
+                json=payload,
                 timeout=(5, 300),
             )
 
@@ -97,3 +116,29 @@ class OllamaGenerationService:
             )
 
         return answer
+
+    def model_digest(self) -> str:
+        """
+        Guide 5.3: pin the model by digest, not tag. Returns the digest of
+        self.model_name from Ollama's /api/tags, or "" if unavailable.
+        Never raises; a missing digest must not stop classification.
+        """
+        try:
+            response = self.session.get(
+                f"{self.base_url}/api/tags",
+                timeout=(5, 30),
+            )
+            response.raise_for_status()
+            models = response.json().get("models") or []
+        except Exception:
+            return ""
+
+        wanted = self.model_name
+        if ":" not in wanted:
+            wanted = f"{wanted}:latest"
+
+        for model in models:
+            if model.get("name") == wanted or model.get("model") == wanted:
+                return str(model.get("digest") or "")
+
+        return ""
